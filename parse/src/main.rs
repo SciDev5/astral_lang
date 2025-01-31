@@ -1,6 +1,3 @@
-use std::rc::Rc;
-
-use loc::LocatedSpan;
 use nom::{
     bytes::complete::{tag, take_until, take_while, take_while1},
     character::complete::one_of,
@@ -8,8 +5,10 @@ use nom::{
     multi::many,
     IResult, Parser,
 };
+use state::LocatedSpan;
 
 mod loc;
+mod state;
 
 type Span<'a> = LocatedSpan<&'a str>;
 enum ASTLiteral<'a> {
