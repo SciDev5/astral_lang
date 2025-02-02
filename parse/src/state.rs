@@ -8,37 +8,71 @@ use nom::{Compare, FindSubstring, Input};
 use crate::loc::FileLoc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LocatedSpan<T> {
+pub struct LocatedSpan<T, S> {
     loc: FileLoc,
     src: T,
+    state: S,
 }
-impl<'a> LocatedSpan<&'a str> {
-    pub const fn from_inner(src: &'a str) -> Self {
-        Self {
-            loc: FileLoc::at(0).with_len(src.len()),
-            src,
-        }
-    }
-}
-impl<'a> LocatedSpan<&'a [u8]> {
-    pub const fn from_inner(src: &'a [u8]) -> Self {
-        Self {
-            loc: FileLoc::at(0).with_len(src.len()),
-            src,
-        }
-    }
-}
-impl<T: Eq + Debug> LocatedSpan<T> {
-    pub fn merge(self, other: Self) -> Self {
-        debug_assert_eq!(&self.src, &other.src);
-        Self {
-            loc: self.loc.merge(other.loc),
+impl<'a, T: ?Sized, S> LocatedSpan<&'a T, S> {
+    pub const fn with_state<Z>(&self, state: Z) -> LocatedSpan<&'a T, Z> {
+        LocatedSpan {
+            loc: self.loc,
             src: self.src,
+            state,
+        }
+    }
+    pub fn map_state<Z>(self, map: impl Fn(S) -> Z) -> LocatedSpan<&'a T, Z> {
+        LocatedSpan {
+            loc: self.loc,
+            src: self.src,
+            state: map(self.state),
+        }
+    }
+    pub const fn as_span(&self) -> LocatedSpan<&'a T, ()> {
+        LocatedSpan {
+            loc: self.loc,
+            src: self.src,
+            state: (),
+        }
+    }
+    pub const fn inner_state(&self) -> &S {
+        &self.state
+    }
+    pub const fn loc(&self) -> FileLoc {
+        self.loc
+    }
+}
+impl<'a, S> LocatedSpan<&'a str, S> {
+    pub const fn from_inner(src: &'a str, state: S) -> Self {
+        Self {
+            loc: FileLoc::at(0).with_len(src.len()),
+            src,
+            state,
         }
     }
 }
 
-impl<'a, T: Index<Range<usize>, Output = T> + ?Sized> LocatedSpan<&'a T>
+impl<'a, S> LocatedSpan<&'a [u8], S> {
+    pub const fn from_inner(src: &'a [u8], state: S) -> Self {
+        Self {
+            loc: FileLoc::at(0).with_len(src.len()),
+            src,
+            state,
+        }
+    }
+}
+impl<T: Eq + Debug, S> LocatedSpan<T, S> {
+    pub fn merge(self, other: Self) -> LocatedSpan<T, ()> {
+        debug_assert_eq!(&self.src, &other.src);
+        LocatedSpan {
+            loc: self.loc.merge(other.loc),
+            src: self.src,
+            state: (),
+        }
+    }
+}
+
+impl<'a, T: Index<Range<usize>, Output = T> + ?Sized, S> LocatedSpan<&'a T, S>
 where
     &'a T: Input,
 {
@@ -47,7 +81,8 @@ where
     }
 }
 
-impl<'a, T: Index<Range<usize>, Output = T> + ?Sized, R> Compare<R> for LocatedSpan<&'a T>
+impl<'a, T: Index<Range<usize>, Output = T> + ?Sized, R, S: Copy> Compare<R>
+    for LocatedSpan<&'a T, S>
 where
     &'a T: Input + Compare<R>,
 {
@@ -59,7 +94,8 @@ where
         self.as_inner().compare_no_case(t)
     }
 }
-impl<'a, T: Index<Range<usize>, Output = T> + ?Sized, R> FindSubstring<R> for LocatedSpan<&'a T>
+impl<'a, T: Index<Range<usize>, Output = T> + ?Sized, R, S: Copy> FindSubstring<R>
+    for LocatedSpan<&'a T, S>
 where
     &'a T: Input + FindSubstring<R>,
 {
@@ -68,7 +104,7 @@ where
     }
 }
 
-impl<'a, T: Index<Range<usize>, Output = T> + ?Sized> Input for LocatedSpan<&'a T>
+impl<'a, T: Index<Range<usize>, Output = T> + ?Sized, S: Copy> Input for LocatedSpan<&'a T, S>
 where
     &'a T: Input,
 {
@@ -84,6 +120,7 @@ where
         Self {
             loc: self.loc.with_len(index),
             src: self.src,
+            state: self.state,
         }
     }
 
@@ -91,6 +128,7 @@ where
         Self {
             loc: self.loc.with_shift_start(index),
             src: self.src,
+            state: self.state,
         }
     }
 

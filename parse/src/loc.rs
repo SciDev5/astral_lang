@@ -44,4 +44,13 @@ impl FileLoc {
             },
         }
     }
+    pub const fn merge_opt(self, other: Option<Self>) -> Self {
+        match other {
+            Some(other) => self.merge(other),
+            None => self,
+        }
+    }
+    pub const fn from_end(self) -> Self {
+        Self::at(self.end_byte)
+    }
 }
