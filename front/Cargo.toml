@@ -1,0 +1,9 @@
+[package]
+name = "front"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+front_parse = { path = "../front_parse" }
+front_verify_structure = { path = "../front_verify_structure" }
+front_verify_types = { path = "../front_verify_types" }

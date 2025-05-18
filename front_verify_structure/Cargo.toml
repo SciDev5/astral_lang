@@ -1,7 +1,6 @@
 [package]
-name = "parse"
+name = "front_verify_structure"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-nom = "8.0.0"

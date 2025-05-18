@@ -315,7 +315,8 @@ fn expr_ident<'a>(src: State<'a>) -> IResult<State<'a>, ASTExpr> {
         .parse(src)
 }
 
-fn main() {
+#[test]
+fn was_main() {
     _ = dbg!(
         expr(Span::from_inner("{helo world}", ()).with_state(StateData {
             bracket: BracketState {
@@ -327,4 +328,5 @@ fn main() {
         }))
         .map(|v| v.1)
     );
+    todo!("make this into a test");
 }

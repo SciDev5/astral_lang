@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+front = { path = "./front" }
 
 [workspace]
-members = ["parse"]
+members = [
+    "front",
+    "front_parse",
+    "front_verify_structure",
+    "front_verify_types",
+]
