@@ -5,7 +5,7 @@ use std::{
 
 use nom::{Compare, FindSubstring, Input};
 
-use crate::loc::FileLoc;
+use super::loc::FileLoc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LocatedSpan<T, S> {

@@ -5,33 +5,17 @@ version = 4
 [[package]]
 name = "astral_lang"
 version = "0.1.0"
-dependencies = [
- "front",
-]
+
+[[package]]
+name = "errorhandling"
+version = "0.1.0"
 
 [[package]]
 name = "front"
 version = "0.1.0"
 dependencies = [
- "front_parse",
- "front_verify_structure",
- "front_verify_types",
-]
-
-[[package]]
-name = "front_parse"
-version = "0.1.0"
-dependencies = [
  "nom",
 ]
-
-[[package]]
-name = "front_verify_structure"
-version = "0.1.0"
-
-[[package]]
-name = "front_verify_types"
-version = "0.1.0"
 
 [[package]]
 name = "memchr"

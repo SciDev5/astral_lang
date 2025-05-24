@@ -1,3 +1,7 @@
+//! Module :: frontend/parser
+//!
+//! Responsible for transforming source files into an AST.
+
 use std::rc::Rc;
 
 use loc::FileLoc;
@@ -11,7 +15,7 @@ use nom::{
 };
 use state::LocatedSpan;
 
-mod loc;
+pub mod loc;
 mod state;
 
 type Span<'a> = LocatedSpan<&'a str, ()>;
@@ -133,11 +137,6 @@ fn bracket<'a, T>(
     move |src: State<'a>| brackets_inner(src, ty, &mut inner)
 }
 
-enum ASTLiteral<'a> {
-    Int(Result<u128, Span<'a>>),
-    Float(Result<f64, Span<'a>>),
-    Bool(bool),
-}
 fn literal(src: State) -> IResult<State, ASTLiteral> {
     fn literal_int(src: State) -> IResult<State, Result<u128, State>> {
         take_while1(|ch: char| ch.is_ascii_digit())
@@ -213,41 +212,6 @@ fn sep(src: State) -> IResult<State, Vec<State>> {
             c.into_iter().filter_map(|(_, v)| v).collect()
         })
         .parse(src)
-}
-
-pub type ASTError = One<str>;
-#[derive(Debug, Clone)]
-pub enum ASTExpr {
-    Error {
-        loc: FileLoc,
-        before: Many<ASTExpr>,
-        error: ASTError,
-    },
-    If {
-        loc: FileLoc,
-        condition: One<ASTExpr>,
-        body: One<ASTExpr>,
-        else_block: Option<One<ASTExpr>>,
-    },
-    Ident {
-        loc: FileLoc,
-        name: One<str>,
-    },
-    Block {
-        loc: FileLoc,
-        body: Many<ASTExpr>,
-        error: Option<ASTError>,
-    },
-}
-impl ASTExpr {
-    fn loc(&self) -> FileLoc {
-        match self {
-            Self::Error { loc, .. }
-            | Self::If { loc, .. }
-            | Self::Ident { loc, .. }
-            | Self::Block { loc, .. } => *loc,
-        }
-    }
 }
 
 fn expr(src: State) -> IResult<State, ASTExpr> {
@@ -329,4 +293,45 @@ fn was_main() {
         .map(|v| v.1)
     );
     todo!("make this into a test");
+}
+
+pub enum ASTLiteral<'a> {
+    Int(Result<u128, Span<'a>>),
+    Float(Result<f64, Span<'a>>),
+    Bool(bool),
+}
+
+pub type ASTError = One<str>;
+#[derive(Debug, Clone)]
+pub enum ASTExpr {
+    Error {
+        loc: FileLoc,
+        before: Many<ASTExpr>,
+        error: ASTError,
+    },
+    If {
+        loc: FileLoc,
+        condition: One<ASTExpr>,
+        body: One<ASTExpr>,
+        else_block: Option<One<ASTExpr>>,
+    },
+    Ident {
+        loc: FileLoc,
+        name: One<str>,
+    },
+    Block {
+        loc: FileLoc,
+        body: Many<ASTExpr>,
+        error: Option<ASTError>,
+    },
+}
+impl ASTExpr {
+    pub fn loc(&self) -> FileLoc {
+        match self {
+            Self::Error { loc, .. }
+            | Self::If { loc, .. }
+            | Self::Ident { loc, .. }
+            | Self::Block { loc, .. } => *loc,
+        }
+    }
 }
