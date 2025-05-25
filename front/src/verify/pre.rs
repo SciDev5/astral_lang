@@ -17,18 +17,27 @@ use std::collections::HashMap;
 use crate::misc::ArbitraryInt;
 
 pub struct PreModule {
-    symbols: Vec<Symbol>,
-    wheres: Vec<PreWhere>,
-    datas: LocalsAndExternalRefs<PreData>,
-    functions: LocalsAndExternalRefs<PreFunction>,
-    metatypes: LocalsAndExternalRefs<PreMetatype>,
-    metatype_impls: LocalsAndExternalRefs<PreMetatypeImpl>,
+    pub symbols: Vec<Symbol>,
+    pub wheres: Vec<PreWhere>,
+    pub datas: LocalsAndExternalRefs<PreData>,
+    pub functions: LocalsAndExternalRefs<PreFunction>,
+    pub metatypes: LocalsAndExternalRefs<PreMetatype>,
+    pub metatype_impls: LocalsAndExternalRefs<PreMetatypeImpl>,
 }
 
-struct LocalsAndExternalRefs<T> {
-    locals: Vec<T>,
+pub struct LocalsAndExternalRefs<T> {
+    pub locals: Vec<T>,
     /// `Vec<{ package_id, thing_id }>`
-    external_refs: Vec<(usize, usize)>,
+    pub external_refs: Vec<(usize, usize)>,
+}
+impl<T> LocalsAndExternalRefs<T> {
+    pub fn get(&self, i: usize) -> &T {
+        if i < self.locals.len() {
+            &self.locals[i]
+        } else {
+            todo!()
+        }
+    }
 }
 
 pub type SymbolId = usize;
@@ -38,8 +47,8 @@ pub type MetatypeId = usize;
 pub type WhereId = usize;
 
 pub struct PreData {
-    where_id: WhereId,
-    fields: PreDataFields,
+    pub where_id: WhereId,
+    pub fields: PreDataFields,
 }
 pub enum PreDataFields {
     Union {
@@ -56,32 +65,27 @@ pub enum PreDataFieldEntry {
     SubData(DataId),
     Field(SymbolId),
 }
-pub struct PreFunctionCommon {
-    where_id: WhereId,
-    args_ty: Vec<SymbolId>,
-    return_ty: SymbolId,
-}
 pub struct PreFunction {
-    com: PreFunctionCommon,
-    body: PreBody,
+    pub where_id: WhereId,
+    pub args_ty: Vec<SymbolId>,
+    pub return_ty: SymbolId,
+    pub body: Option<PreBody>,
 }
-pub struct PreMetatypeFunction {
-    com: PreFunctionCommon,
-    body: Option<PreBody>,
-}
+
 pub struct PreMetatype {
-    where_id: WhereId,
-    fns: Vec<PreMetatypeFunction>,
+    pub where_id: WhereId,
+    pub fns: Vec<FunctionId>,
 }
 pub struct PreMetatypeImpl {
-    where_id: WhereId,
-    fns: Vec<Option<FunctionId>>,
+    pub where_id: WhereId,
+    pub metatype_id: MetatypeId,
+    pub fns: Vec<Option<FunctionId>>,
 }
 pub struct PreWhere {
     /// outer scope where clause to concatonate before this
-    parent_id: Option<WhereId>,
-    n_vars: usize,
-    constraints: Vec<(MetatypeId, Vec<SymbolId>)>,
+    pub parent_id: Option<WhereId>,
+    pub n_vars: usize,
+    pub constraints: Vec<(MetatypeId, Vec<SymbolId>)>,
 }
 pub enum Symbol {
     Data {
@@ -110,12 +114,12 @@ pub enum Symbol {
 }
 pub struct PreBody {
     /// Note: the first locals are bound to function arguments.
-    locals: Vec<SymbolId>,
-    expr: PreExpr,
+    pub locals: Vec<SymbolId>,
+    pub expr: PreExpr,
 }
 pub struct PreExpr {
-    ret_ty: SymbolId,
-    eval: PreExprEval,
+    pub ret_ty: SymbolId,
+    pub eval: PreExprEval,
 }
 pub enum PreExprEval {
     Literal {
@@ -145,6 +149,10 @@ pub enum PreExprEval {
         data_id: Option<DataId>,
         value: PreExprDataInit,
     },
+    DataAccess {
+        value: Box<PreExpr>,
+        field: PreExprField,
+    },
 }
 pub enum PreExprLiteral {
     FunctionRef {
@@ -165,8 +173,20 @@ pub enum PreExprDataInit {
     TupleIsh { map: Vec<PreExpr> },
 }
 pub enum PreExprPattern {
-    Literal { literal: PreExprLiteral },
-    Var { local_ref_id: usize },
-    StructIsh { map: HashMap<String, PreExpr> },
-    TupleIsh { map: Vec<PreExpr> },
+    Literal {
+        literal: PreExprLiteral,
+    },
+    Var {
+        local_ref_id: usize,
+    },
+    StructIsh {
+        map: HashMap<String, PreExprPattern>,
+    },
+    TupleIsh {
+        map: Vec<PreExprPattern>,
+    },
+}
+pub enum PreExprField {
+    StructIsh(String),
+    TupleIsh(usize),
 }
