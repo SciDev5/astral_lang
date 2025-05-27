@@ -74,7 +74,31 @@ fn y[C](c:C) where AB(C, i32) = {
 */
 
 impl Solver {
-    fn solve_function(&mut self, function_id: FunctionId) {}
+    fn solve_function(&mut self, function_id: FunctionId) {
+        todo!()
+    }
+
+    fn solve_expr(&mut self, function_id: FunctionId, expr: PreExpr) -> PreExpr {
+        todo!()
+    }
+
+    fn verify_metatypeimpl_args(&mut self, impl_id: usize) {
+        let v_impl = &self.module.metatype_impls.locals[impl_id];
+        let v_metatype = self.module.metatypes.get(v_impl.metatype_id);
+        todo!()
+    }
+    fn verify_metatypeimpl_ret(&mut self, impl_id: usize) {
+        let v_impl = &self.module.metatype_impls.locals[impl_id];
+        let v_metatype = self.module.metatypes.get(v_impl.metatype_id);
+        todo!()
+    }
+
+    fn verify_solver_wheres(&mut self) {
+        todo!()
+    }
+
+    /////////////////////////////////////////////////////////////////////////////////////////
+    //// HELPERS ////////////////////////////////////////////////////////////////////////////
 
     /// Generate the substitutions that would be applied when instatiating this type.
     fn instantiate_gen_subs(
@@ -241,11 +265,15 @@ impl Solver {
     }
 
     /// Makes two symbols represent the same type if possible, otherwise returns `Err`.
-    fn unify(&mut self, sym_a: SymbolId, sym_b: SymbolId) -> Result<(), AVerifyError> {
+    fn unify(&mut self, sym_a: SymbolId, sym_b: SymbolId) -> Result<(), ()> {
         if !self.simplify_subs(sym_a) || !self.simplify_subs(sym_b) {
             todo!("deal with recursive types");
         }
-        let subs = self.unify_immut(sym_a, sym_b, HashMap::new())?;
+        let subs = self
+            .unify_immut(sym_a, sym_b, HashMap::new())
+            .map_err(|err| {
+                self.errors.push(err);
+            })?;
         for (from, to) in subs {
             self.module.symbols[from] = Symbol::Subs { to };
         }
@@ -422,19 +450,4 @@ impl Solver {
 
 
     */
-
-    fn verify_metatypeimpl_args(&mut self, impl_id: usize) {
-        let v_impl = &self.module.metatype_impls.locals[impl_id];
-        let v_metatype = self.module.metatypes.get(v_impl.metatype_id);
-        todo!()
-    }
-    fn verify_metatypeimpl_ret(&mut self, impl_id: usize) {
-        let v_impl = &self.module.metatype_impls.locals[impl_id];
-        let v_metatype = self.module.metatypes.get(v_impl.metatype_id);
-        todo!()
-    }
-
-    fn verify_solver_wheres(&mut self) {
-        todo!()
-    }
 }

@@ -153,6 +153,10 @@ pub enum PreExprEval {
         value: Box<PreExpr>,
         field: PreExprField,
     },
+    Return {
+        value: Box<PreExpr>,
+    },
+    // TODO: branch, loop
 }
 pub enum PreExprLiteral {
     FunctionRef {
