@@ -1,8 +1,102 @@
 use std::collections::HashMap;
+use std::iter::once;
 
 use errorhandling::AVerifyError;
 
+use super::super::post::*;
 use super::pre::*;
+
+#[derive(Debug, Clone, Copy)]
+enum GlobalRefData<TL, TN> {
+    Local(TL),
+    Nonlocal(TN),
+}
+impl<TL, TN> GlobalRefData<TL, TN> {
+    fn map<RL, RN>(
+        self,
+        map_local: impl Fn(TL) -> RL,
+        map_nonlocal: impl Fn(TN) -> RN,
+    ) -> GlobalRefData<RL, RN> {
+        match self {
+            GlobalRefData::Local(v) => GlobalRefData::Local(map_local(v)),
+            GlobalRefData::Nonlocal(v) => GlobalRefData::Nonlocal(map_nonlocal(v)),
+        }
+    }
+    fn consume<R>(self, map_local: impl Fn(TL) -> R, map_nonlocal: impl Fn(TN) -> R) -> R {
+        match self {
+            GlobalRefData::Local(v) => map_local(v),
+            GlobalRefData::Nonlocal(v) => map_nonlocal(v),
+        }
+    }
+}
+type GlobalRef<'a, TL, TN> = GlobalRefData<(&'a PreModule, &'a TL), (&'a AModule, &'a TN)>;
+
+fn get_module(module: &PreModule, id: ModuleId) -> GlobalRefData<&PreModule, &AModule> {
+    if module.global_id == id {
+        GlobalRefData::Local(module)
+    } else {
+        GlobalRefData::Nonlocal(module.ref_recursive_deps[&id].as_ref())
+    }
+}
+fn get_function(
+    module: &PreModule,
+    GlobalId { module_id, id }: FunctionId,
+) -> GlobalRef<PreFunction, AFunction> {
+    get_module(module, module_id).map(|m| (m, &m.functions[id]), |m| (m, &m.functions[id]))
+}
+fn get_data(
+    module: &PreModule,
+    GlobalId { module_id, id }: FunctionId,
+) -> GlobalRef<PreData, AData> {
+    get_module(module, module_id).map(|m| (m, &m.datas[id]), |m| (m, &m.datas[id]))
+}
+fn get_metatype(
+    module: &PreModule,
+    GlobalId { module_id, id }: FunctionId,
+) -> GlobalRef<PreMetatype, AMetatype> {
+    get_module(module, module_id).map(|m| (m, &m.metatypes[id]), |m| (m, &m.metatypes[id]))
+}
+trait _GlobalRefWhere<'a> {
+    fn get_where(self) -> GlobalRef<'a, PreWhere, AWhere>;
+    fn get_where_id(self) -> WhereIdGlobal;
+}
+macro_rules! impl_globalref_getwhere {
+    ($l:ty,$n:ty) => {
+        impl<'a> _GlobalRefWhere<'a> for GlobalRef<'a, $l, $n> {
+            fn get_where(self) -> GlobalRef<'a, PreWhere, AWhere> {
+                self.map(
+                    |(m, v)| (m, &m.wheres[v.where_id]),
+                    |(m, v)| (m, &m.wheres[v.where_id]),
+                )
+            }
+            fn get_where_id(self) -> WhereIdGlobal {
+                self.consume(
+                    |(m, v)| WhereIdGlobal {
+                        module_id: m.global_id,
+                        id: v.where_id,
+                    },
+                    |(m, v)| WhereIdGlobal {
+                        module_id: m.global_id,
+                        id: v.where_id,
+                    },
+                )
+            }
+        }
+    };
+}
+impl_globalref_getwhere!(PreFunction, AFunction);
+impl_globalref_getwhere!(PreData, AData);
+impl_globalref_getwhere!(PreMetatype, AMetatype);
+impl<'a> GlobalRef<'a, PreWhere, AWhere> {
+    fn get_parent(self) -> Option<GlobalRef<'a, PreWhere, AWhere>> {
+        Some(match self {
+            GlobalRefData::Local((m, v)) => GlobalRefData::Local((m, &m.wheres[v.parent_id?])),
+            GlobalRefData::Nonlocal((m, v)) => {
+                GlobalRefData::Nonlocal((m, &m.wheres[v.parent_id?]))
+            }
+        })
+    }
+}
 
 /// Solve the undefined types in the module.
 ///
@@ -10,14 +104,22 @@ use super::pre::*;
 /// already, such as data field types and metatype function
 /// types, but expressions should not yet be typed.
 fn solve_module(module: PreModule) -> (PreModule, Vec<AVerifyError>) {
+    let symbols = module.symbols;
+    let mut module = PreModule {
+        symbols: Vec::new(),
+        ..module
+    };
     let mut state = Solver {
-        solved_functions: std::iter::repeat_n(false, module.functions.locals.len()).collect(),
+        solved_functions: std::iter::repeat_n(false, module.functions.len()).collect(),
         errors: Vec::new(),
         solver_requested_constraints: Vec::new(),
-        module,
+        symbols,
     };
-    for i in 0..state.module.metatype_impls.locals.len() {
-        state.verify_metatypeimpl_args(i);
+    for i in 0..module.metatypes.len() {
+        state.verify_metatype(&module, i);
+    }
+    for i in 0..module.metatype_impls.len() {
+        state.verify_metatypeimpl(&module, i);
     }
     while let Some((i, _)) = state
         .solved_functions
@@ -25,19 +127,22 @@ fn solve_module(module: PreModule) -> (PreModule, Vec<AVerifyError>) {
         .enumerate()
         .find(|(_, solved)| !*solved)
     {
-        state.solve_function(i);
-    }
-    for i in 0..state.module.metatype_impls.locals.len() {
-        state.verify_metatypeimpl_ret(i);
+        state.solve_function(&mut module, i);
     }
 
     state.verify_solver_wheres();
 
-    (state.module, state.errors)
+    (
+        PreModule {
+            symbols: state.symbols,
+            ..module
+        },
+        state.errors,
+    )
 }
 
 struct Solver {
-    module: PreModule,
+    symbols: Vec<Symbol>,
     solved_functions: Vec<bool>,
     solver_requested_constraints: Vec<(MetatypeId, Vec<SymbolId>)>,
     errors: Vec<AVerifyError>,
@@ -74,27 +179,46 @@ fn y[C](c:C) where AB(C, i32) = {
 */
 
 impl Solver {
-    fn solve_function(&mut self, function_id: FunctionId) {
+    fn solve_function(&mut self, module: &mut PreModule, function_id: LocalId) {
+        let function = &mut module.functions[function_id];
+        if let Some(PreBody { locals, expr }) = function.body.take() {
+            function.body = Some(PreBody {
+                expr: self.solve_expr(function, &locals, expr),
+                locals,
+            });
+        }
+    }
+    /*
+    - need an error type which indicates it would be impossible to access this data without erroring first.
+    - compiled modules have everything inline, can be instantiated into new data.
+    - PreModule stores immutable references to its dependencies
+     */
+
+    fn solve_expr(
+        &mut self,
+        function: &PreFunction,
+        locals: &Vec<SymbolId>,
+        expr: PreExpr,
+    ) -> PreExpr {
         todo!()
     }
 
-    fn solve_expr(&mut self, function_id: FunctionId, expr: PreExpr) -> PreExpr {
-        todo!()
+    fn verify_metatype(&mut self, module: &PreModule, metatype_id: LocalId) {
+        todo!();
     }
-
-    fn verify_metatypeimpl_args(&mut self, impl_id: usize) {
-        let v_impl = &self.module.metatype_impls.locals[impl_id];
-        let v_metatype = self.module.metatypes.get(v_impl.metatype_id);
-        todo!()
-    }
-    fn verify_metatypeimpl_ret(&mut self, impl_id: usize) {
-        let v_impl = &self.module.metatype_impls.locals[impl_id];
-        let v_metatype = self.module.metatypes.get(v_impl.metatype_id);
-        todo!()
+    fn verify_metatypeimpl(&mut self, module: &PreModule, impl_id: LocalId) {
+        let impl_v = &module.metatype_impls[impl_id];
+        debug_assert!(module.wheres[impl_v.where_id].constraints.len() >= 1);
+        let (metatype_id, bindings) = &module.wheres[impl_v.where_id].constraints[0];
+        let v_metatype = get_metatype(module, *metatype_id);
+        todo!("annoying");
+        // let subs = self.instantiate_gen_subs(module, bindings.clone(), wh)
+        // instantiate v_metatype with bindings
+        // unify arguments and return types of associated functions
     }
 
     fn verify_solver_wheres(&mut self) {
-        todo!()
+        todo!("hard")
     }
 
     /////////////////////////////////////////////////////////////////////////////////////////
@@ -103,11 +227,12 @@ impl Solver {
     /// Generate the substitutions that would be applied when instatiating this type.
     fn instantiate_gen_subs(
         &mut self,
+        module: &PreModule,
         bindings: Vec<SymbolId>,
         mut where_id: WhereId,
     ) -> HashMap<(WhereId, usize), SymbolId> {
         let mut where_ids = Vec::from([where_id]);
-        while let Some(next_where_id) = self.module.wheres[where_id].parent_id {
+        while let Some(next_where_id) = module.wheres[where_id].parent_id {
             where_ids.push(next_where_id);
             where_id = next_where_id;
         }
@@ -116,16 +241,14 @@ impl Solver {
         let map = where_ids
             .iter()
             .copied()
-            .flat_map(|where_id| {
-                (0..self.module.wheres[where_id].n_vars).map(move |i| (where_id, i))
-            })
+            .flat_map(|where_id| (0..module.wheres[where_id].n_vars).map(move |i| (where_id, i)))
             .zip(bindings.into_iter())
             .collect::<HashMap<_, _>>();
 
         for where_id in where_ids {
-            for (metatype_id, bindings) in self.module.wheres[where_id].constraints.clone() {
+            for (metatype_id, bindings) in module.wheres[where_id].constraints.clone() {
                 let bindings = self
-                    .instantiate_substitute_all(bindings.clone(), &map)
+                    .instantiate_substitute_all(module, bindings.clone(), &map)
                     .unwrap_or(bindings);
                 self.solver_requested_constraints
                     .push((metatype_id, bindings));
@@ -141,6 +264,7 @@ impl Solver {
     /// Returns `None` if it does not need to be changed.
     fn instantiate_substitute(
         &mut self,
+        module: &PreModule,
         symbol: SymbolId,
         map: &HashMap<(WhereId, usize), SymbolId>,
     ) -> Option<Symbol> {
@@ -151,17 +275,17 @@ impl Solver {
         // typeof y = instantiate_substitute[A -> T]{ TheData.y[A] } = V[T]
          */
 
-        match &self.module.symbols[symbol] {
+        match &self.symbols[symbol] {
             Symbol::Data { data_id, bindings } => Some(Symbol::Data {
                 data_id: *data_id,
-                bindings: self.instantiate_substitute_all(bindings.clone(), map)?,
+                bindings: self.instantiate_substitute_all(module, bindings.clone(), map)?,
             }),
             Symbol::Function {
                 function_id,
                 bindings,
             } => Some(Symbol::Function {
                 function_id: *function_id,
-                bindings: self.instantiate_substitute_all(bindings.clone(), map)?,
+                bindings: self.instantiate_substitute_all(module, bindings.clone(), map)?,
             }),
             Symbol::MetatypeFunction {
                 metatype_id,
@@ -170,18 +294,30 @@ impl Solver {
             } => Some(Symbol::MetatypeFunction {
                 function_id: *function_id,
                 metatype_id: *metatype_id,
-                bindings: self.instantiate_substitute_all(bindings.clone(), map)?,
+                bindings: self.instantiate_substitute_all(module, bindings.clone(), map)?,
             }),
             Symbol::Metavar { where_id, var_id } => Some(Symbol::Subs {
                 to: map.get(&(*where_id, *var_id)).copied()?,
             }),
             Symbol::Reference { inner_data } => Some(Symbol::Reference {
                 inner_data: {
-                    let sym = self.instantiate_substitute(*inner_data, map)?;
+                    let sym = self.instantiate_substitute(module, *inner_data, map)?;
                     self.add_symbol(sym)
                 },
             }),
-            Symbol::Subs { to } => self.instantiate_substitute(*to, map),
+            Symbol::FunctionPointer { args, ret } => {
+                let ret = *ret;
+                let args = args.clone();
+                Some(Symbol::FunctionPointer {
+                    args: self.instantiate_substitute_all(module, args, map)?,
+                    ret: {
+                        let ret = self.instantiate_substitute(module, ret, map)?;
+                        self.add_symbol(ret)
+                    },
+                })
+            }
+            Symbol::Error {} => Some(Symbol::Error {}),
+            Symbol::Subs { to } => self.instantiate_substitute(module, *to, map),
         }
     }
     /// Helper for [`Self::instantiate_substitute`] which runs it on each of the
@@ -189,12 +325,13 @@ impl Solver {
     /// unchanged, if all unchanged, returns `None`.
     fn instantiate_substitute_all(
         &mut self,
+        module: &PreModule,
         symbols_in: Vec<SymbolId>,
         map: &HashMap<(WhereId, usize), SymbolId>,
     ) -> Option<Vec<SymbolId>> {
         let bindings = symbols_in
             .iter()
-            .map(|symbol| self.instantiate_substitute(*symbol, map))
+            .map(|symbol| self.instantiate_substitute(module, *symbol, map))
             .collect::<Vec<_>>();
         if bindings.iter().all(|v| v.is_none()) {
             return None;
@@ -205,8 +342,8 @@ impl Solver {
         Some(bindings)
     }
     fn add_symbol(&mut self, sym: Symbol) -> SymbolId {
-        let id = self.module.symbols.len();
-        self.module.symbols.push(sym);
+        let id = self.symbols.len();
+        self.symbols.push(sym);
         id
     }
 
@@ -227,7 +364,12 @@ impl Solver {
                     .into_iter()
                     .all(|sym| simplify(symbols, sym, trace)),
                 Symbol::Reference { inner_data } => simplify(symbols, *inner_data, trace),
-                Symbol::Metavar { .. } => todo!(),
+                Symbol::FunctionPointer { args, ret } => args
+                    .clone()
+                    .into_iter()
+                    .chain(once(*ret))
+                    .all(|sym| simplify(symbols, sym, trace)),
+                Symbol::Metavar { .. } | Symbol::Error {} => true,
                 Symbol::Subs { .. } => simplify_flatten_subs(symbols, sym, trace),
             };
             trace.pop();
@@ -261,7 +403,7 @@ impl Solver {
             ok
         }
         let mut trace = Vec::new();
-        return simplify(&mut self.module.symbols, sym, &mut trace);
+        return simplify(&mut self.symbols, sym, &mut trace);
     }
 
     /// Makes two symbols represent the same type if possible, otherwise returns `Err`.
@@ -275,7 +417,7 @@ impl Solver {
                 self.errors.push(err);
             })?;
         for (from, to) in subs {
-            self.module.symbols[from] = Symbol::Subs { to };
+            self.symbols[from] = Symbol::Subs { to };
         }
         Ok(())
     }
@@ -310,7 +452,7 @@ impl Solver {
         - [done in final verify step] unify needs to be able to ensure merge metatype impls are valid or can be validated (this can be done at the end after all unification complete)
          */
 
-        match (&self.module.symbols[sym_a], &self.module.symbols[sym_b]) {
+        match (&self.symbols[sym_a], &self.symbols[sym_b]) {
             (
                 Symbol::Data {
                     data_id: data_id_0,

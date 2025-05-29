@@ -12,58 +12,38 @@
 //      - metavar from its where
 //      - data by checking all impls [for efficiency should be lut for now no]
 
-use std::collections::HashMap;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
-use crate::misc::ArbitraryInt;
+use crate::{
+    misc::ArbitraryInt,
+    post::{AModule, DataId, FunctionId, FunctionIdLocal, LocalId, MetatypeId, ModuleId, WhereId},
+};
 
 pub struct PreModule {
+    pub global_id: ModuleId,
+    pub deps: HashSet<ModuleId>,
+    pub ref_recursive_deps: HashMap<ModuleId, Arc<AModule>>,
     pub symbols: Vec<Symbol>,
     pub wheres: Vec<PreWhere>,
-    pub datas: LocalsAndExternalRefs<PreData>,
-    pub functions: LocalsAndExternalRefs<PreFunction>,
-    pub metatypes: LocalsAndExternalRefs<PreMetatype>,
-    pub metatype_impls: LocalsAndExternalRefs<PreMetatypeImpl>,
+    pub datas: Vec<PreData>,
+    pub functions: Vec<PreFunction>,
+    pub metatypes: Vec<PreMetatype>,
+    pub metatype_impls: Vec<PreMetatypeImpl>,
 }
 
-pub struct LocalsAndExternalRefs<T> {
-    pub locals: Vec<T>,
-    /// `Vec<{ package_id, thing_id }>`
-    pub external_refs: Vec<(usize, usize)>,
-}
-impl<T> LocalsAndExternalRefs<T> {
-    pub fn get(&self, i: usize) -> &T {
-        if i < self.locals.len() {
-            &self.locals[i]
-        } else {
-            todo!()
-        }
-    }
-}
-
-pub type SymbolId = usize;
-pub type DataId = usize;
-pub type FunctionId = usize;
-pub type MetatypeId = usize;
-pub type WhereId = usize;
+pub type SymbolId = LocalId;
 
 pub struct PreData {
     pub where_id: WhereId,
     pub fields: PreDataFields,
 }
 pub enum PreDataFields {
-    Union {
-        map: HashMap<String, PreDataFieldEntry>,
-    },
-    StructIsh {
-        map: HashMap<String, PreDataFieldEntry>,
-    },
-    TupleIsh {
-        map: Vec<PreDataFieldEntry>,
-    },
-}
-pub enum PreDataFieldEntry {
-    SubData(DataId),
-    Field(SymbolId),
+    Union { map: Vec<(String, SymbolId)> },
+    IntersectionNamed { map: Vec<(String, SymbolId)> },
+    IntersectionOrdered { map: Vec<SymbolId> },
 }
 pub struct PreFunction {
     pub where_id: WhereId,
@@ -73,13 +53,16 @@ pub struct PreFunction {
 }
 
 pub struct PreMetatype {
+    /// First constraint should be this metatype, and it should bind all
+    /// the metavars it creates and in strict ascending order without skips.
+    /// (this makes the functions behave as expected.)
     pub where_id: WhereId,
-    pub fns: Vec<FunctionId>,
+    pub fns: Vec<FunctionIdLocal>,
 }
 pub struct PreMetatypeImpl {
+    /// First constraint is the metatype to implement.
     pub where_id: WhereId,
-    pub metatype_id: MetatypeId,
-    pub fns: Vec<Option<FunctionId>>,
+    pub fns: Vec<Option<FunctionIdLocal>>,
 }
 pub struct PreWhere {
     /// outer scope where clause to concatonate before this
@@ -91,6 +74,10 @@ pub enum Symbol {
     Data {
         data_id: DataId,
         bindings: Vec<SymbolId>,
+    },
+    FunctionPointer {
+        args: Vec<SymbolId>,
+        ret: SymbolId,
     },
     Function {
         function_id: FunctionId,
@@ -111,9 +98,11 @@ pub enum Symbol {
     Subs {
         to: SymbolId,
     },
+    Error {},
 }
 pub struct PreBody {
     /// Note: the first locals are bound to function arguments.
+    /// The zero'th local is at index `args.len()`
     pub locals: Vec<SymbolId>,
     pub expr: PreExpr,
 }
@@ -127,6 +116,15 @@ pub enum PreExprEval {
     },
     Call {
         callable: Box<PreExpr>,
+        arguments: Vec<PreExpr>,
+    },
+    CallFunction {
+        function_id: FunctionId,
+        arguments: Vec<PreExpr>,
+    },
+    CallMetatypeFunction {
+        metatype_id: MetatypeId,
+        function_id: usize,
         arguments: Vec<PreExpr>,
     },
     Block {
