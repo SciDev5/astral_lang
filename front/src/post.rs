@@ -36,6 +36,7 @@ pub struct AData {
     pub fields: ADataFields,
 }
 pub enum ADataFields {
+    Elemental,
     Union { variants: Vec<(String, AType)> },
     IntersectionNamed { fields: Vec<(String, AType)> },
     IntersectionOrdered { fields: Vec<AType> },

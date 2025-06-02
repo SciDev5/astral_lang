@@ -108,6 +108,12 @@ impl<'a> GlobalRef<'a, PreWhere, AWhere> {
             }
         })
     }
+    fn count_bindings(self) -> usize {
+        (match &self {
+            GlobalRefData::Local((_, v)) => v.n_vars,
+            GlobalRefData::Nonlocal((_, v)) => v.n_vars,
+        }) + self.get_parent().map(|v| v.count_bindings()).unwrap_or(0)
+    }
 }
 
 /// Solve the undefined types in the module.
@@ -257,6 +263,8 @@ impl Solver {
             }
         };
 
+        todo!("solve wheres");
+
         let ret_ok = self.unify(ret_ty, fn_ret_ty);
         if fn_args_ty.len() != arguments.len() {
             return Err(());
@@ -272,6 +280,47 @@ impl Solver {
         }
         Ok(())
     }
+    fn solve_expr_liter(
+        &mut self,
+        module: &PreModule,
+        ret_ty: usize,
+        literal: &PreExprLiteral,
+    ) -> Result<(), ()> {
+        let sym = match literal {
+            PreExprLiteral::FunctionRef { function_id } => Symbol::Function {
+                function_id: *function_id,
+                bindings: std::iter::repeat_with(|| self.add_unbound())
+                    .take(
+                        get_function(module, *function_id)
+                            .get_where()
+                            .count_bindings(),
+                    )
+                    .collect(),
+            },
+            PreExprLiteral::MetatypeFunctionRef {
+                metatype_id,
+                function_id,
+            } => Symbol::MetatypeFunction {
+                metatype_id: *metatype_id,
+                function_id: *function_id,
+                bindings: std::iter::repeat_with(|| self.add_unbound())
+                    .take(
+                        get_metatype_function(module, *metatype_id, *function_id)
+                            .get_where()
+                            .count_bindings(),
+                    )
+                    .collect(),
+            },
+            PreExprLiteral::Integer(_) => todo!("switching between int type variants"),
+            PreExprLiteral::Bool(_) => Symbol::Data {
+                data_id: module.ref_core.d_bool,
+                bindings: Vec::new(),
+            },
+        };
+        let sym = self.add_symbol(sym);
+        self.unify(ret_ty, sym)?;
+        Ok(())
+    }
     fn solve_expr_eval(
         &mut self,
         module: &PreModule,
@@ -281,7 +330,10 @@ impl Solver {
         expr: PreExprEval,
     ) -> Result<PreExprEval, ()> {
         Ok(match expr {
-            PreExprEval::Literal { value } => todo!("depends on core (literals)"),
+            PreExprEval::Literal { value } => {
+                self.solve_expr_liter(module, ret_ty, &value)?;
+                PreExprEval::Literal { value }
+            }
             PreExprEval::Call {
                 callable,
                 arguments,
@@ -320,7 +372,19 @@ impl Solver {
                             },
                         )?
                     }
-                    _ => todo!("depends on core (callable)"),
+                    _ if arguments.len() + 1 < module.ref_core.mt_call.len() => self
+                        .solve_expr_eval(
+                            module,
+                            function,
+                            locals,
+                            ret_ty,
+                            PreExprEval::CallMetatypeFunction {
+                                metatype_id: module.ref_core.mt_call[arguments.len() + 1],
+                                function_id: 0,
+                                arguments: once(callable).chain(arguments.into_iter()).collect(),
+                            },
+                        )?,
+                    _ => todo!(),
                 }
             }
             PreExprEval::CallFunction {
@@ -368,10 +432,12 @@ impl Solver {
                     .into_iter()
                     .map(|v| self.solve_expr(module, function, locals, v))
                     .collect::<Vec<_>>();
-                let sym_ret = inner
-                    .last()
-                    .map(|v| v.ret_ty)
-                    .unwrap_or_else(|| todo!("depends on core (void)"));
+                let sym_ret = inner.last().map(|v| v.ret_ty).unwrap_or_else(|| {
+                    self.add_symbol(Symbol::Data {
+                        data_id: module.ref_core.d_void,
+                        bindings: Vec::new(),
+                    })
+                });
                 self.unify(ret_ty, sym_ret)?;
                 PreExprEval::Block { inner }
             }

@@ -18,6 +18,7 @@ use std::{
 };
 
 use crate::{
+    core::CoreRefs,
     misc::ArbitraryInt,
     post::{
         AModule, DataId, FunctionId, FunctionIdLocal, LocalId, MetatypeId, ModuleId, WhereId,
@@ -29,6 +30,7 @@ pub struct PreModule {
     pub global_id: ModuleId,
     pub deps: HashSet<ModuleId>,
     pub ref_recursive_deps: HashMap<ModuleId, Arc<AModule>>,
+    pub ref_core: CoreRefs,
     pub symbols: Vec<Symbol>,
     pub wheres: Vec<PreWhere>,
     pub datas: Vec<PreData>,
@@ -44,6 +46,7 @@ pub struct PreData {
     pub fields: PreDataFields,
 }
 pub enum PreDataFields {
+    Elemental,
     Union { map: Vec<(String, SymbolId)> },
     IntersectionNamed { map: Vec<(String, SymbolId)> },
     IntersectionOrdered { map: Vec<SymbolId> },

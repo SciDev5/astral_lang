@@ -1,3 +1,4 @@
+mod core;
 mod misc;
 mod parse;
 mod post;
