@@ -120,7 +120,7 @@ pub enum AExprEval {
     },
     DataInit {
         data_id: Option<DataId>,
-        value: AExprDataInit,
+        value: AExprDataInitContent,
     },
     DataAccess {
         value: Box<AExpr>,
@@ -149,7 +149,7 @@ pub enum AExprLiteral {
     I64(i64),
     Bool(bool),
 }
-pub enum AExprDataInit {
+pub enum AExprDataInitContent {
     Union {
         variant_id: usize,
         content: Box<AExpr>,
@@ -171,7 +171,7 @@ pub enum AExprPattern {
     },
     Union {
         variant_id: usize,
-        content: Box<AExprPattern>,
+        sub_pat: Box<AExprPattern>,
     },
     Intersection {
         fields: Vec<AExprPattern>,

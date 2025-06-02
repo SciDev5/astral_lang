@@ -56,6 +56,18 @@ fn get_metatype(
 ) -> GlobalRef<PreMetatype, AMetatype> {
     get_module(module, module_id).map(|m| (m, &m.metatypes[id]), |m| (m, &m.metatypes[id]))
 }
+fn get_metatype_function(
+    module: &PreModule,
+    GlobalId { module_id, id }: FunctionId,
+    function_id: usize,
+) -> GlobalRef<PreFunction, AFunction> {
+    get_module(module, module_id)
+        .map(|m| (m, &m.metatypes[id]), |m| (m, &m.metatypes[id]))
+        .map(
+            |(m, mt)| (m, &m.functions[mt.fns[function_id]]),
+            |(m, mt)| (m, &m.functions[mt.fns[function_id]]),
+        )
+}
 trait _GlobalRefWhere<'a> {
     fn get_where(self) -> GlobalRef<'a, PreWhere, AWhere>;
     fn get_where_id(self) -> WhereIdGlobal;
@@ -180,12 +192,17 @@ fn y[C](c:C) where AB(C, i32) = {
 
 impl Solver {
     fn solve_function(&mut self, module: &mut PreModule, function_id: LocalId) {
-        let function = &mut module.functions[function_id];
-        if let Some(PreBody { locals, expr }) = function.body.take() {
-            function.body = Some(PreBody {
-                expr: self.solve_expr(function, &locals, expr),
+        if self.solved_functions[function_id] {
+            return;
+        } else {
+            self.solved_functions[function_id] = true;
+        }
+        if let Some(PreBody { locals, expr }) = module.functions[function_id].body.take() {
+            let body = Some(PreBody {
+                expr: self.solve_expr(&module, &module.functions[function_id], &locals, expr),
                 locals,
             });
+            module.functions[function_id].body = body;
         }
     }
     /*
@@ -194,13 +211,206 @@ impl Solver {
     - PreModule stores immutable references to its dependencies
      */
 
+    /// Resolves the types of the expressions and intermediate values through repeated
+    /// application of instantiate and unify.
     fn solve_expr(
         &mut self,
+        module: &PreModule,
         function: &PreFunction,
         locals: &Vec<SymbolId>,
         expr: PreExpr,
     ) -> PreExpr {
-        todo!()
+        let ret_ty = expr.ret_ty;
+        PreExpr {
+            ret_ty,
+            eval: match self.solve_expr_eval(module, function, locals, ret_ty, expr.eval) {
+                Ok(v) => v,
+                Err(_) => PreExprEval::Error {},
+            },
+        }
+    }
+    fn solve_expr_functioncall_types(
+        &mut self,
+        module: &PreModule,
+        ret_ty: usize,
+        arguments: &Vec<PreExpr>,
+        fun: GlobalRef<PreFunction, AFunction>,
+    ) -> Result<(), ()> {
+        let subs = self.instantiate_gen_subs(module, Vec::new(), fun.get_where_id());
+
+        let (fn_ret_ty, fn_args_ty) = match fun {
+            GlobalRefData::Local((m, f)) => {
+                let fn_ret_ty = self
+                    .instantiate_substitute_local(m, f.return_ty, &subs)
+                    .map(|sym| self.add_symbol(sym))
+                    .unwrap_or(f.return_ty);
+                let fn_args_ty = self
+                    .instantiate_substitute_local_all(m, f.args_ty.clone(), &subs)
+                    .unwrap_or(f.args_ty.clone());
+                (fn_ret_ty, fn_args_ty)
+            }
+            GlobalRefData::Nonlocal((_, f)) => {
+                let fn_ret_ty = self.instantiate_substitute_remote(&f.return_ty, &subs);
+                let fn_ret_ty = self.add_symbol(fn_ret_ty);
+                let fn_args_ty = self.instantiate_substitute_remote_all(&f.args_ty, &subs);
+                (fn_ret_ty, fn_args_ty)
+            }
+        };
+
+        let ret_ok = self.unify(ret_ty, fn_ret_ty);
+        if fn_args_ty.len() != arguments.len() {
+            return Err(());
+        }
+        let args_ok = fn_args_ty
+            .into_iter()
+            .zip(arguments.iter())
+            .map(|(fn_arg_ty, arg)| self.unify(arg.ret_ty, fn_arg_ty))
+            .collect::<Vec<_>>();
+        ret_ok?;
+        for arg_ok in args_ok {
+            arg_ok?;
+        }
+        Ok(())
+    }
+    fn solve_expr_eval(
+        &mut self,
+        module: &PreModule,
+        function: &PreFunction,
+        locals: &Vec<SymbolId>,
+        ret_ty: usize,
+        expr: PreExprEval,
+    ) -> Result<PreExprEval, ()> {
+        Ok(match expr {
+            PreExprEval::Literal { value } => todo!("depends on core (literals)"),
+            PreExprEval::Call {
+                callable,
+                arguments,
+            } => {
+                let callable = self.solve_expr(module, function, locals, *callable);
+                match self.resolve(callable.ret_ty) {
+                    Some(Symbol::Function { function_id, .. }) => {
+                        let function_id = *function_id;
+                        self.solve_expr_eval(
+                            module,
+                            function,
+                            locals,
+                            ret_ty,
+                            PreExprEval::CallFunction {
+                                function_id,
+                                arguments,
+                            },
+                        )?
+                    }
+                    Some(Symbol::MetatypeFunction {
+                        metatype_id,
+                        function_id,
+                        ..
+                    }) => {
+                        let metatype_id = *metatype_id;
+                        let function_id = *function_id;
+                        self.solve_expr_eval(
+                            module,
+                            function,
+                            locals,
+                            ret_ty,
+                            PreExprEval::CallMetatypeFunction {
+                                metatype_id,
+                                function_id,
+                                arguments,
+                            },
+                        )?
+                    }
+                    _ => todo!("depends on core (callable)"),
+                }
+            }
+            PreExprEval::CallFunction {
+                function_id,
+                arguments,
+            } => {
+                let arguments = arguments
+                    .into_iter()
+                    .map(|expr| self.solve_expr(module, function, locals, expr))
+                    .collect::<Vec<_>>();
+                self.solve_expr_functioncall_types(
+                    module,
+                    ret_ty,
+                    &arguments,
+                    get_function(module, function_id),
+                )?;
+                PreExprEval::CallFunction {
+                    function_id,
+                    arguments,
+                }
+            }
+            PreExprEval::CallMetatypeFunction {
+                metatype_id,
+                function_id,
+                arguments,
+            } => {
+                let arguments = arguments
+                    .into_iter()
+                    .map(|expr| self.solve_expr(module, function, locals, expr))
+                    .collect::<Vec<_>>();
+                self.solve_expr_functioncall_types(
+                    module,
+                    ret_ty,
+                    &arguments,
+                    get_metatype_function(module, metatype_id, function_id),
+                )?;
+                PreExprEval::CallMetatypeFunction {
+                    metatype_id,
+                    function_id,
+                    arguments,
+                }
+            }
+            PreExprEval::Block { inner } => {
+                let inner = inner
+                    .into_iter()
+                    .map(|v| self.solve_expr(module, function, locals, v))
+                    .collect::<Vec<_>>();
+                let sym_ret = inner
+                    .last()
+                    .map(|v| v.ret_ty)
+                    .unwrap_or_else(|| todo!("depends on core (void)"));
+                self.unify(ret_ty, sym_ret)?;
+                PreExprEval::Block { inner }
+            }
+            PreExprEval::LocalRef { local_ref_id } => {
+                let sym = if local_ref_id < function.args_ty.len() {
+                    function.args_ty[local_ref_id]
+                } else {
+                    locals[local_ref_id - function.args_ty.len()]
+                };
+                self.unify(ret_ty, sym)?;
+                PreExprEval::LocalRef { local_ref_id }
+            }
+            PreExprEval::Deref { reference } => {
+                let reference = self.solve_expr(module, function, locals, *reference);
+                let sym = self.add_symbol(Symbol::Reference {
+                    inner_data: reference.ret_ty,
+                });
+                self.unify(ret_ty, sym)?;
+                PreExprEval::Deref {
+                    reference: Box::new(reference),
+                }
+            }
+            PreExprEval::Assign { receiver, value } => {
+                todo!("depends on metatype impl resolution (data)")
+            }
+            PreExprEval::DataInit { data_id, value } => {
+                todo!("depends on metatype impl resolution (data)")
+            }
+            PreExprEval::DataAccess { value, field } => {
+                todo!("depends on metatype impl resolution (data)")
+            }
+            PreExprEval::Return { value } => {
+                self.unify(ret_ty, value.ret_ty)?;
+                PreExprEval::Return {
+                    value: Box::new(self.solve_expr(module, function, locals, *value)),
+                }
+            }
+            PreExprEval::Error {} => PreExprEval::Error {},
+        })
     }
 
     fn verify_metatype(&mut self, module: &PreModule, metatype_id: LocalId) {
@@ -229,8 +439,23 @@ impl Solver {
         &mut self,
         module: &PreModule,
         bindings: Vec<SymbolId>,
+        where_id: WhereIdGlobal,
+    ) -> HashMap<(WhereIdGlobal, usize), SymbolId> {
+        match get_module(module, where_id.module_id) {
+            GlobalRefData::Local(m) => self.instantiate_gen_subs_local(m, bindings, where_id.id),
+            GlobalRefData::Nonlocal(m) => {
+                self.instantiate_gen_subs_remote(m, bindings, where_id.id)
+            }
+        }
+    }
+
+    /// Generate the substitutions that would be applied when instatiating this type.
+    fn instantiate_gen_subs_local(
+        &mut self,
+        module: &PreModule,
+        bindings: Vec<SymbolId>,
         mut where_id: WhereId,
-    ) -> HashMap<(WhereId, usize), SymbolId> {
+    ) -> HashMap<(WhereIdGlobal, usize), SymbolId> {
         let mut where_ids = Vec::from([where_id]);
         while let Some(next_where_id) = module.wheres[where_id].parent_id {
             where_ids.push(next_where_id);
@@ -241,14 +466,28 @@ impl Solver {
         let map = where_ids
             .iter()
             .copied()
-            .flat_map(|where_id| (0..module.wheres[where_id].n_vars).map(move |i| (where_id, i)))
-            .zip(bindings.into_iter())
+            .flat_map(|where_id| {
+                (0..module.wheres[where_id].n_vars).map(move |i| {
+                    (
+                        GlobalId {
+                            module_id: module.global_id,
+                            id: where_id,
+                        },
+                        i,
+                    )
+                })
+            })
+            .zip(
+                bindings
+                    .into_iter()
+                    .chain(std::iter::from_fn(|| Some(self.add_unbound()))),
+            )
             .collect::<HashMap<_, _>>();
 
         for where_id in where_ids {
             for (metatype_id, bindings) in module.wheres[where_id].constraints.clone() {
                 let bindings = self
-                    .instantiate_substitute_all(module, bindings.clone(), &map)
+                    .instantiate_substitute_local_all(module, bindings.clone(), &map)
                     .unwrap_or(bindings);
                 self.solver_requested_constraints
                     .push((metatype_id, bindings));
@@ -258,15 +497,109 @@ impl Solver {
         map
     }
 
+    /// Generate the substitutions that would be applied when instatiating this type.
+    fn instantiate_gen_subs_remote(
+        &mut self,
+        module: &AModule,
+        bindings: Vec<SymbolId>,
+        mut where_id: WhereId,
+    ) -> HashMap<(WhereIdGlobal, usize), SymbolId> {
+        let mut where_ids = Vec::from([where_id]);
+        while let Some(next_where_id) = module.wheres[where_id].parent_id {
+            where_ids.push(next_where_id);
+            where_id = next_where_id;
+        }
+        where_ids.reverse(); // outermost first
+
+        let map = where_ids
+            .iter()
+            .copied()
+            .flat_map(|where_id| {
+                (0..module.wheres[where_id].n_vars).map(move |i| {
+                    (
+                        GlobalId {
+                            module_id: module.global_id,
+                            id: where_id,
+                        },
+                        i,
+                    )
+                })
+            })
+            .zip(
+                bindings
+                    .into_iter()
+                    .chain(std::iter::from_fn(|| Some(self.add_unbound()))),
+            )
+            .collect::<HashMap<_, _>>();
+
+        for where_id in where_ids {
+            for (metatype_id, bindings) in &module.wheres[where_id].constraints {
+                let bindings = self.instantiate_substitute_remote_all(bindings, &map);
+                self.solver_requested_constraints
+                    .push((*metatype_id, bindings));
+            }
+        }
+
+        map
+    }
+
+    /// Substitute types into the place of fields of generic entities in order
+    /// to instantiate them.
+    fn instantiate_substitute_remote(
+        &mut self,
+        ty: &AType,
+        map: &HashMap<(WhereIdGlobal, usize), SymbolId>,
+    ) -> Symbol {
+        match ty {
+            AType::Data { data_id, bindings } => Symbol::Data {
+                data_id: *data_id,
+                bindings: self.instantiate_substitute_remote_all(bindings, map),
+            },
+            AType::FunctionPointer { args, ret } => Symbol::FunctionPointer {
+                args: self.instantiate_substitute_remote_all(args, map),
+                ret: {
+                    let sym = self.instantiate_substitute_remote(ret, map);
+                    self.add_symbol(sym)
+                },
+            },
+            AType::Metavar { where_id, var_id } => map
+                .get(&(*where_id, *var_id))
+                .map(|sym_id| Symbol::Subs { to: *sym_id })
+                .unwrap_or_else(|| self.instantiate_substitute_remote(ty, map)),
+            AType::Reference { inner_data } => Symbol::Reference {
+                inner_data: {
+                    let sym = self.instantiate_substitute_remote(inner_data.as_ref(), map);
+                    self.add_symbol(sym)
+                },
+            },
+            AType::Error {} => Symbol::Error {},
+        }
+    }
+    /// Helper for [`Self::instantiate_substitute_remote`] which runs it on each of the
+    /// given input symbols. Substitutes for origional symbol id if some are
+    /// unchanged, if all unchanged, returns `None`.
+    fn instantiate_substitute_remote_all(
+        &mut self,
+        ty: &Vec<AType>,
+        map: &HashMap<(WhereIdGlobal, usize), SymbolId>,
+    ) -> Vec<SymbolId> {
+        ty.iter()
+            .map(|ty| {
+                let sym = self.instantiate_substitute_remote(ty, map);
+                self.add_symbol(sym)
+            })
+            .collect()
+    }
+
     /// Substitute types into the place of fields of generic entities in order
     /// to instantiate them.
     ///
     /// Returns `None` if it does not need to be changed.
-    fn instantiate_substitute(
+    fn instantiate_substitute_local(
         &mut self,
         module: &PreModule,
         symbol: SymbolId,
-        map: &HashMap<(WhereId, usize), SymbolId>,
+        map: &HashMap<(WhereIdGlobal, usize), SymbolId>,
     ) -> Option<Symbol> {
         /*
         data TheData[A] struct { y: V[A] }
@@ -278,14 +611,14 @@ impl Solver {
         match &self.symbols[symbol] {
             Symbol::Data { data_id, bindings } => Some(Symbol::Data {
                 data_id: *data_id,
-                bindings: self.instantiate_substitute_all(module, bindings.clone(), map)?,
+                bindings: self.instantiate_substitute_local_all(module, bindings.clone(), map)?,
             }),
             Symbol::Function {
                 function_id,
                 bindings,
             } => Some(Symbol::Function {
                 function_id: *function_id,
-                bindings: self.instantiate_substitute_all(module, bindings.clone(), map)?,
+                bindings: self.instantiate_substitute_local_all(module, bindings.clone(), map)?,
             }),
             Symbol::MetatypeFunction {
                 metatype_id,
@@ -294,14 +627,14 @@ impl Solver {
             } => Some(Symbol::MetatypeFunction {
                 function_id: *function_id,
                 metatype_id: *metatype_id,
-                bindings: self.instantiate_substitute_all(module, bindings.clone(), map)?,
+                bindings: self.instantiate_substitute_local_all(module, bindings.clone(), map)?,
             }),
             Symbol::Metavar { where_id, var_id } => Some(Symbol::Subs {
                 to: map.get(&(*where_id, *var_id)).copied()?,
             }),
             Symbol::Reference { inner_data } => Some(Symbol::Reference {
                 inner_data: {
-                    let sym = self.instantiate_substitute(module, *inner_data, map)?;
+                    let sym = self.instantiate_substitute_local(module, *inner_data, map)?;
                     self.add_symbol(sym)
                 },
             }),
@@ -309,29 +642,29 @@ impl Solver {
                 let ret = *ret;
                 let args = args.clone();
                 Some(Symbol::FunctionPointer {
-                    args: self.instantiate_substitute_all(module, args, map)?,
+                    args: self.instantiate_substitute_local_all(module, args, map)?,
                     ret: {
-                        let ret = self.instantiate_substitute(module, ret, map)?;
+                        let ret = self.instantiate_substitute_local(module, ret, map)?;
                         self.add_symbol(ret)
                     },
                 })
             }
             Symbol::Error {} => Some(Symbol::Error {}),
-            Symbol::Subs { to } => self.instantiate_substitute(module, *to, map),
+            Symbol::Subs { to } => self.instantiate_substitute_local(module, *to, map),
         }
     }
-    /// Helper for [`Self::instantiate_substitute`] which runs it on each of the
+    /// Helper for [`Self::instantiate_substitute_local`] which runs it on each of the
     /// given input symbols. Substitutes for origional symbol id if some are
     /// unchanged, if all unchanged, returns `None`.
-    fn instantiate_substitute_all(
+    fn instantiate_substitute_local_all(
         &mut self,
         module: &PreModule,
         symbols_in: Vec<SymbolId>,
-        map: &HashMap<(WhereId, usize), SymbolId>,
+        map: &HashMap<(WhereIdGlobal, usize), SymbolId>,
     ) -> Option<Vec<SymbolId>> {
         let bindings = symbols_in
             .iter()
-            .map(|symbol| self.instantiate_substitute(module, *symbol, map))
+            .map(|symbol| self.instantiate_substitute_local(module, *symbol, map))
             .collect::<Vec<_>>();
         if bindings.iter().all(|v| v.is_none()) {
             return None;
@@ -344,6 +677,11 @@ impl Solver {
     fn add_symbol(&mut self, sym: Symbol) -> SymbolId {
         let id = self.symbols.len();
         self.symbols.push(sym);
+        id
+    }
+    fn add_unbound(&mut self) -> SymbolId {
+        let id = self.symbols.len();
+        self.symbols.push(Symbol::Subs { to: id });
         id
     }
 
@@ -404,6 +742,18 @@ impl Solver {
         }
         let mut trace = Vec::new();
         return simplify(&mut self.symbols, sym, &mut trace);
+    }
+
+    fn resolve(&mut self, mut sym: SymbolId) -> Option<&Symbol> {
+        if !self.simplify_subs(sym) {
+            todo!("deal with recursive types");
+        }
+        Some(loop {
+            match &self.symbols[sym] {
+                Symbol::Subs { to } => sym = *to,
+                sym => break sym,
+            }
+        })
     }
 
     /// Makes two symbols represent the same type if possible, otherwise returns `Err`.

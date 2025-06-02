@@ -19,7 +19,10 @@ use std::{
 
 use crate::{
     misc::ArbitraryInt,
-    post::{AModule, DataId, FunctionId, FunctionIdLocal, LocalId, MetatypeId, ModuleId, WhereId},
+    post::{
+        AModule, DataId, FunctionId, FunctionIdLocal, LocalId, MetatypeId, ModuleId, WhereId,
+        WhereIdGlobal,
+    },
 };
 
 pub struct PreModule {
@@ -89,7 +92,7 @@ pub enum Symbol {
         bindings: Vec<SymbolId>,
     },
     Metavar {
-        where_id: WhereId,
+        where_id: WhereIdGlobal,
         var_id: usize,
     },
     Reference {
@@ -130,9 +133,6 @@ pub enum PreExprEval {
     Block {
         inner: Vec<PreExpr>,
     },
-    Possibilities {
-        possibilities: Vec<PreExpr>,
-    },
     LocalRef {
         local_ref_id: usize,
     },
@@ -145,7 +145,7 @@ pub enum PreExprEval {
     },
     DataInit {
         data_id: Option<DataId>,
-        value: PreExprDataInit,
+        value: PreExprDataInitContent,
     },
     DataAccess {
         value: Box<PreExpr>,
@@ -155,6 +155,7 @@ pub enum PreExprEval {
         value: Box<PreExpr>,
     },
     // TODO: branch, loop
+    Error {},
 }
 pub enum PreExprLiteral {
     FunctionRef {
@@ -164,15 +165,20 @@ pub enum PreExprLiteral {
         metatype_id: MetatypeId,
         function_id: usize,
     },
-    Unit {
-        data_id: DataId,
-    },
     Integer(ArbitraryInt),
     Bool(bool),
 }
-pub enum PreExprDataInit {
-    StructIsh { map: HashMap<String, PreExpr> },
-    TupleIsh { map: Vec<PreExpr> },
+pub enum PreExprDataInitContent {
+    Union {
+        variant_name: String,
+        val: Box<PreExpr>,
+    },
+    IntersectionNamed {
+        map: HashMap<String, PreExpr>,
+    },
+    IntersectionOrdered {
+        map: Vec<PreExpr>,
+    },
 }
 pub enum PreExprPattern {
     Literal {
@@ -181,11 +187,15 @@ pub enum PreExprPattern {
     Var {
         local_ref_id: usize,
     },
-    StructIsh {
-        map: HashMap<String, PreExprPattern>,
+    Union {
+        variant_name: String,
+        sub_pat: Box<PreExprPattern>,
     },
-    TupleIsh {
-        map: Vec<PreExprPattern>,
+    IntersectionNamed {
+        fields: HashMap<String, PreExprPattern>,
+    },
+    IntersectionOrdered {
+        fields: Vec<PreExprPattern>,
     },
 }
 pub enum PreExprField {
