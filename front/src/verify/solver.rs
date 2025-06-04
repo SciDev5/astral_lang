@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::iter::once;
 
 use errorhandling::AVerifyError;
@@ -68,6 +68,12 @@ fn get_metatype_function(
             |(m, mt)| (m, &m.functions[mt.fns[function_id]]),
         )
 }
+fn get_where(
+    module: &PreModule,
+    GlobalId { module_id, id }: FunctionId,
+) -> GlobalRef<PreWhere, AWhere> {
+    get_module(module, module_id).map(|m| (m, &m.wheres[id]), |m| (m, &m.wheres[id]))
+}
 trait _GlobalRefWhere<'a> {
     fn get_where(self) -> GlobalRef<'a, PreWhere, AWhere>;
     fn get_where_id(self) -> WhereIdGlobal;
@@ -99,6 +105,24 @@ macro_rules! impl_globalref_getwhere {
 impl_globalref_getwhere!(PreFunction, AFunction);
 impl_globalref_getwhere!(PreData, AData);
 impl_globalref_getwhere!(PreMetatype, AMetatype);
+impl<'a> GlobalRef<'a, PreMetatype, AMetatype> {
+    fn get_function(self, i: usize) -> GlobalRef<'a, PreFunction, AFunction> {
+        match self {
+            GlobalRefData::Local((module, metatype_v)) => {
+                GlobalRefData::Local((module, &module.functions[metatype_v.fns[i]]))
+            }
+            GlobalRefData::Nonlocal((module, metatype_v)) => {
+                GlobalRefData::Nonlocal((module, &module.functions[metatype_v.fns[i]]))
+            }
+        }
+    }
+    fn n_function(self) -> usize {
+        match self {
+            GlobalRefData::Local((module, metatype_v)) => metatype_v.fns.len(),
+            GlobalRefData::Nonlocal((module, metatype_v)) => metatype_v.fns.len(),
+        }
+    }
+}
 impl<'a> GlobalRef<'a, PreWhere, AWhere> {
     fn get_parent(self) -> Option<GlobalRef<'a, PreWhere, AWhere>> {
         Some(match self {
@@ -113,6 +137,38 @@ impl<'a> GlobalRef<'a, PreWhere, AWhere> {
             GlobalRefData::Local((_, v)) => v.n_vars,
             GlobalRefData::Nonlocal((_, v)) => v.n_vars,
         }) + self.get_parent().map(|v| v.count_bindings()).unwrap_or(0)
+    }
+    fn constraints(self) -> Vec<(GlobalId, Vec<GlobalRefData<SymbolId, &'a AType>>)> {
+        let mut s = match self {
+            GlobalRefData::Local((_, v)) => v
+                .constraints
+                .iter()
+                .map(|(id, v)| {
+                    (
+                        *id,
+                        v.iter()
+                            .map(|v| GlobalRefData::Local(*v))
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            GlobalRefData::Nonlocal((_, v)) => v
+                .constraints
+                .iter()
+                .map(|(id, v)| {
+                    (
+                        *id,
+                        v.iter()
+                            .map(|v| GlobalRefData::Nonlocal(v))
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        };
+        if let Some(r) = self.get_parent() {
+            s.extend(r.constraints().into_iter());
+        }
+        s
     }
 }
 
@@ -148,7 +204,7 @@ fn solve_module(module: PreModule) -> (PreModule, Vec<AVerifyError>) {
         state.solve_function(&mut module, i);
     }
 
-    state.verify_solver_wheres();
+    state.verify_solver_wheres(&module);
 
     (
         PreModule {
@@ -263,8 +319,6 @@ impl Solver {
             }
         };
 
-        todo!("solve wheres");
-
         let ret_ok = self.unify(ret_ty, fn_ret_ty);
         if fn_args_ty.len() != arguments.len() {
             return Err(());
@@ -311,7 +365,13 @@ impl Solver {
                     )
                     .collect(),
             },
-            PreExprLiteral::Integer(_) => todo!("switching between int type variants"),
+            PreExprLiteral::Integer(_) => {
+                dbg!("todo: switching between int type variants (currently assuming everything is i32)");
+                Symbol::Data {
+                    data_id: module.ref_core.d_i32,
+                    bindings: Vec::new(),
+                }
+            }
             PreExprLiteral::Bool(_) => Symbol::Data {
                 data_id: module.ref_core.d_bool,
                 bindings: Vec::new(),
@@ -384,7 +444,7 @@ impl Solver {
                                 arguments: once(callable).chain(arguments.into_iter()).collect(),
                             },
                         )?,
-                    _ => todo!(),
+                    _ => todo!("error[not callable (too many arguments)]"),
                 }
             }
             PreExprEval::CallFunction {
@@ -480,21 +540,214 @@ impl Solver {
     }
 
     fn verify_metatype(&mut self, module: &PreModule, metatype_id: LocalId) {
-        todo!();
+        /*
+        metatypes must have:
+            - all types of associated functions predefined
+        */
+        let metatype_v = &module.metatypes[metatype_id];
+        for (fn_i, function_v) in metatype_v
+            .fns
+            .iter()
+            .copied()
+            .map(|id| &module.functions[id])
+            .enumerate()
+        {
+            for (arg_i, arg_ty) in function_v.args_ty.iter().enumerate() {
+                if !self.is_fully_specified(*arg_ty) {
+                    dbg!(
+                        "todo: error[metatype function argument not fully specified]",
+                        (metatype_id, fn_i, arg_i)
+                    );
+                }
+            }
+            if !self.is_fully_specified(function_v.return_ty) {
+                dbg!(
+                    "todo: error[metatype function return not fully specified]",
+                    (metatype_id, fn_i)
+                );
+            }
+        }
     }
     fn verify_metatypeimpl(&mut self, module: &PreModule, impl_id: LocalId) {
+        /*
+        metatype impls must have:
+            - all types and wheres unifiable with metatype definitions
+            - function bodies for all function implementations not specified in the metatype
+         */
+
         let impl_v = &module.metatype_impls[impl_id];
+
         debug_assert!(module.wheres[impl_v.where_id].constraints.len() >= 1);
         let (metatype_id, bindings) = &module.wheres[impl_v.where_id].constraints[0];
-        let v_metatype = get_metatype(module, *metatype_id);
-        todo!("annoying");
-        // let subs = self.instantiate_gen_subs(module, bindings.clone(), wh)
-        // instantiate v_metatype with bindings
-        // unify arguments and return types of associated functions
+        let metatype_v = get_metatype(module, *metatype_id);
+        debug_assert_eq!(impl_v.fns.len(), metatype_v.n_function());
+
+        let subs = self.instantiate_gen_subs(module, bindings.clone(), metatype_v.get_where_id());
+
+        for i in 0..impl_v.fns.len() {
+            let fn_v = metatype_v.get_function(i);
+            let Some(fn_impl_v) = impl_v.fns[i].map(|id| &module.functions[id]) else {
+                if fn_v.consume(|(_, v)| v.body.is_none(), |(_, v)| v.body.is_none()) {
+                    // if there is no default body, there must be one in the impl block
+                    dbg!("todo: error[if there is no default body, there must be one in the impl block]");
+                }
+                continue;
+            };
+
+            let (args_ty, ret_ty) = match fn_v {
+                GlobalRefData::Local((m, fn_v)) => (
+                    self.instantiate_substitute_local_all(m, fn_v.args_ty.clone(), &subs)
+                        .unwrap_or_else(|| fn_v.args_ty.clone()),
+                    {
+                        self.instantiate_substitute_local(m, fn_v.return_ty, &subs)
+                            .map(|sym| self.add_symbol(sym))
+                            .unwrap_or(fn_v.return_ty)
+                    },
+                ),
+                GlobalRefData::Nonlocal((m, fn_v)) => (
+                    self.instantiate_substitute_remote_all(&fn_v.args_ty, &subs),
+                    {
+                        let sym = self.instantiate_substitute_remote(&fn_v.return_ty, &subs);
+                        self.add_symbol(sym)
+                    },
+                ),
+            };
+
+            if args_ty.len() != fn_impl_v.args_ty.len() {
+                dbg!("todo: error[metatype impl function args count mismatched]");
+                continue;
+            }
+
+            for (arg_a, arg_b) in args_ty.into_iter().zip(fn_impl_v.args_ty.iter().copied()) {
+                if self.unify(arg_a, arg_b).is_err() {
+                    todo!("error[metatype impl argument unify failed]")
+                }
+            }
+            if self.unify(ret_ty, fn_impl_v.return_ty).is_err() {
+                todo!("error[metatype impl return type unify failed]")
+            }
+        }
     }
 
-    fn verify_solver_wheres(&mut self) {
-        todo!("hard")
+    fn verify_intermediate_solver_wheres(&mut self, module: &PreModule) {
+        self.verify_solver_wheres(module)
+    }
+    fn verify_solver_wheres(&mut self, module: &PreModule) {
+        let mut req_constraints = Vec::new();
+        std::mem::swap(&mut self.solver_requested_constraints, &mut req_constraints);
+        req_constraints.retain(|(metatype_id, bindings)| {
+            self.verify_solver_where(module, *metatype_id, bindings)
+                .is_ok()
+        });
+    }
+    fn verify_solver_where(
+        &mut self,
+        module: &PreModule,
+        metatype_id: GlobalId,
+        bindings: &Vec<SymbolId>,
+    ) -> Result<(), ()> {
+        let local_impls_from_wheres = bindings
+            .iter()
+            .copied()
+            .flat_map(|sym| self.get_locally_bound_wheres(sym))
+            .collect::<HashSet<_>>();
+        let local_impl_matches = if local_impls_from_wheres.is_empty() {
+            // global impl
+            dbg!("todo: this is so slow and so awful make it not so slow and not so awful");
+            let candidate_impls_remote = module.ref_recursive_deps.values().flat_map(|m| {
+                m.metatype_impls.iter().map(|impl_v| GlobalId {
+                    module_id: m.global_id,
+                    id: impl_v.where_id,
+                })
+            });
+            let candidate_impls_local = module.metatype_impls.iter().map(|v| GlobalId {
+                module_id: module.global_id,
+                id: v.where_id,
+            });
+            self.gen_impl_matches(
+                module,
+                metatype_id,
+                bindings,
+                candidate_impls_local.chain(candidate_impls_remote),
+            )
+        } else {
+            // local impl
+            dbg!("todo: required constraints can be satisfied recursively by the constraints of the implemented metatype");
+            self.gen_impl_matches(
+                module,
+                metatype_id,
+                bindings,
+                local_impls_from_wheres.into_iter(),
+            )
+        };
+        if local_impl_matches.is_empty() {
+            Err(todo!("error[no matching impl found]"))
+        } else if local_impl_matches.len() == 1 {
+            Ok(())
+        } else {
+            dbg!("todo: error[too many matching impls found] !! only if is final pass not intermediate");
+            Ok(())
+        }
+    }
+    fn gen_impl_matches(
+        &mut self,
+        module: &PreModule,
+        metatype_id: GlobalId,
+        bindings: &Vec<SymbolId>,
+        impl_wheres: impl Iterator<Item = GlobalId>,
+    ) -> Vec<HashMap<SymbolId, SymbolId>> {
+        impl_wheres
+            .flat_map(|id| get_where(module, id).constraints())
+            .filter(|(impl_metatype_id, _)| metatype_id == *impl_metatype_id)
+            .filter_map(|(_, impl_bindings)| {
+                let impl_bindings = impl_bindings
+                    .into_iter()
+                    .map(|v| match v {
+                        GlobalRefData::Local(v) => v,
+                        GlobalRefData::Nonlocal(v) => {
+                            let sym = self.instantiate_substitute_remote(v, &HashMap::new());
+                            self.add_symbol(sym)
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                if !bindings
+                    .iter()
+                    .chain(impl_bindings.iter())
+                    .all(|sym| self.simplify_subs(*sym))
+                {
+                    todo!("deal with recursive types");
+                }
+                self.unify_bindings(bindings, &impl_bindings, HashMap::new())
+                    .ok()
+            })
+            .collect()
+    }
+    // fn is_satisfied_by(&self, ) {}
+    fn get_locally_bound_wheres(&self, sym: SymbolId) -> HashSet<WhereIdGlobal> {
+        // so inefficient lmao
+        match &self.symbols[sym] {
+            Symbol::Data { bindings, .. }
+            | Symbol::Function { bindings, .. }
+            | Symbol::MetatypeFunction { bindings, .. } => bindings
+                .iter()
+                .copied()
+                .flat_map(|sym| self.get_locally_bound_wheres(sym))
+                .collect(),
+            Symbol::FunctionPointer { args, ret } => args
+                .iter()
+                .chain(once(ret))
+                .copied()
+                .flat_map(|sym| self.get_locally_bound_wheres(sym))
+                .collect(),
+            Symbol::Subs { to: sym } | Symbol::Reference { inner_data: sym } => {
+                self.get_locally_bound_wheres(*sym)
+            }
+            Symbol::Metavar {
+                where_id,
+                var_id: _,
+            } => HashSet::from([*where_id]),
+            Symbol::Error {} => HashSet::new(),
+        }
     }
 
     /////////////////////////////////////////////////////////////////////////////////////////
@@ -822,6 +1075,30 @@ impl Solver {
         })
     }
 
+    fn is_fully_specified(&self, sym: SymbolId) -> bool {
+        match &self.symbols[sym] {
+            Symbol::Data { bindings, .. }
+            | Symbol::MetatypeFunction { bindings, .. }
+            | Symbol::Function { bindings, .. } => {
+                bindings.iter().all(|sym| self.is_fully_specified(*sym))
+            }
+            Symbol::FunctionPointer { args, ret } => {
+                args.iter().all(|sym| self.is_fully_specified(*sym))
+                    && self.is_fully_specified(*ret)
+            }
+            Symbol::Reference { inner_data: sym } | Symbol::Subs { to: sym } => {
+                self.is_fully_specified(*sym)
+            }
+            Symbol::Metavar { .. } | Symbol::Error {} => true,
+        }
+    }
+
+    fn apply_unify_subs(&mut self, subs: HashMap<SymbolId, SymbolId>) {
+        for (from, to) in subs {
+            self.symbols[from] = Symbol::Subs { to };
+        }
+    }
+
     /// Makes two symbols represent the same type if possible, otherwise returns `Err`.
     fn unify(&mut self, sym_a: SymbolId, sym_b: SymbolId) -> Result<(), ()> {
         if !self.simplify_subs(sym_a) || !self.simplify_subs(sym_b) {
@@ -832,9 +1109,7 @@ impl Solver {
             .map_err(|err| {
                 self.errors.push(err);
             })?;
-        for (from, to) in subs {
-            self.symbols[from] = Symbol::Subs { to };
-        }
+        self.apply_unify_subs(subs);
         Ok(())
     }
 
@@ -882,7 +1157,7 @@ impl Solver {
                 if data_id_0 == data_id_1 {
                     self.unify_bindings(bindings_0, bindings_1, existing_subs)
                 } else {
-                    Err(todo!("unify error"))
+                    Err(todo!("error[unify]"))
                 }
             }
             (
@@ -898,7 +1173,7 @@ impl Solver {
                 if function_id_0 == function_id_1 {
                     self.unify_bindings(bindings_0, bindings_1, existing_subs)
                 } else {
-                    Err(todo!("unify error"))
+                    Err(todo!("error[unify]"))
                 }
             }
             (
@@ -916,7 +1191,7 @@ impl Solver {
                 if metatype_id_0 == metatype_id_1 && function_id_0 == function_id_1 {
                     self.unify_bindings(bindings_0, bindings_1, existing_subs)
                 } else {
-                    Err(todo!("unify error"))
+                    Err(todo!("error[unify]"))
                 }
             }
             (
@@ -932,7 +1207,7 @@ impl Solver {
                 if where_id_0 == where_id_1 && var_id_0 == var_id_1 {
                     Ok(existing_subs)
                 } else {
-                    Err(todo!("unify error"))
+                    Err(todo!("error[unify]"))
                 }
             }
             (
@@ -962,7 +1237,7 @@ impl Solver {
                 }),
                 sym_b => self.unify_immut(sym_a, sym_b, existing_subs),
             },
-            _ => Err(todo!("unify error")),
+            _ => Err(todo!("error[unify]")),
         }
     }
     /*
