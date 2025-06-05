@@ -521,13 +521,126 @@ impl Solver {
                 }
             }
             PreExprEval::Assign { receiver, value } => {
-                todo!("depends on metatype impl resolution (data)")
+                let value = self.solve_expr(module, function, locals, *value);
+                self.verify_intermediate_solver_wheres(module);
+                let sym = match &receiver {
+                    PreExprPattern::Var { local_ref_id } => {
+                        if *local_ref_id < function.args_ty.len() {
+                            function.args_ty[*local_ref_id]
+                        } else {
+                            locals[*local_ref_id - function.args_ty.len()]
+                        }
+                    }
+                    _ => todo!("kinda a long impl, come back to this"),
+                };
+                self.unify(ret_ty, sym)?;
+                PreExprEval::Assign {
+                    receiver,
+                    value: Box::new(value),
+                }
             }
-            PreExprEval::DataInit { data_id, value } => {
-                todo!("depends on metatype impl resolution (data)")
-            }
+            PreExprEval::DataInit { data_id, value } => PreExprEval::DataInit {
+                data_id,
+                value: match value {
+                    PreExprDataInitContent::IntersectionNamed { mut map } => {
+                        map.values_mut().for_each(|expr| {
+                            let mut expr_tmp = PreExpr {
+                                ret_ty: 0,
+                                eval: PreExprEval::Block { inner: Vec::new() },
+                            };
+                            std::mem::swap(&mut expr_tmp, expr);
+                            *expr = self.solve_expr(module, function, locals, expr_tmp);
+                        });
+                        PreExprDataInitContent::IntersectionNamed { map }
+                    }
+                    PreExprDataInitContent::IntersectionOrdered { mut map } => {
+                        map.iter_mut().for_each(|expr| {
+                            let mut expr_tmp = PreExpr {
+                                ret_ty: 0,
+                                eval: PreExprEval::Block { inner: Vec::new() },
+                            };
+                            std::mem::swap(&mut expr_tmp, expr);
+                            *expr = self.solve_expr(module, function, locals, expr_tmp);
+                        });
+                        PreExprDataInitContent::IntersectionOrdered { map }
+                    }
+                    PreExprDataInitContent::Union { variant_name, val } => {
+                        PreExprDataInitContent::Union {
+                            variant_name,
+                            val: Box::new(self.solve_expr(module, function, locals, *val)),
+                        }
+                    }
+                },
+            },
             PreExprEval::DataAccess { value, field } => {
-                todo!("depends on metatype impl resolution (data)")
+                let value = self.solve_expr(module, function, locals, *value);
+                self.verify_intermediate_solver_wheres(module);
+                let sym = match self.resolve(value.ret_ty) {
+                    Some(Symbol::Data { data_id, bindings }) => {
+                        let data_v = get_data(module, *data_id);
+                        let bindings = bindings.clone();
+                        let subs =
+                            self.instantiate_gen_subs(module, bindings, data_v.get_where_id());
+                        match data_v {
+                            GlobalRefData::Local((_, data_v)) => match (&data_v.fields, &field) {
+                                (
+                                    PreDataFields::IntersectionNamed { map },
+                                    PreExprField::StructIsh(name),
+                                ) => map.iter().find_map(|(name_key, sym)| {
+                                    if name_key == name {
+                                        Some(sym)
+                                    } else {
+                                        None
+                                    }
+                                }),
+                                (
+                                    PreDataFields::IntersectionOrdered { map },
+                                    PreExprField::TupleIsh(index),
+                                ) => map.get(*index),
+                                _ => None,
+                            }
+                            .map(|sym| {
+                                self.instantiate_substitute_local(module, *sym, &subs)
+                                    .map(|sym| self.add_symbol(sym))
+                                    .unwrap_or(*sym)
+                            }),
+                            GlobalRefData::Nonlocal((_, data_v)) => (match (&data_v.fields, &field)
+                            {
+                                (
+                                    ADataFields::IntersectionNamed { fields },
+                                    PreExprField::StructIsh(name),
+                                ) => fields.iter().find_map(|(name_key, sym)| {
+                                    if name_key == name {
+                                        Some(sym)
+                                    } else {
+                                        None
+                                    }
+                                }),
+                                (
+                                    ADataFields::IntersectionOrdered { fields },
+                                    PreExprField::TupleIsh(index),
+                                ) => fields.get(*index),
+
+                                _ => None,
+                            })
+                            .map(|ty| {
+                                let sym = self.instantiate_substitute_remote(ty, &subs);
+                                self.add_symbol(sym)
+                            }),
+                        }
+                    }
+                    _ => todo!("error[cannot access field of non-data]"),
+                };
+                match sym {
+                    Some(sym) => {
+                        self.unify(ret_ty, sym)?;
+                        PreExprEval::DataAccess {
+                            value: Box::new(value),
+                            field,
+                        }
+                    }
+                    None => todo!("error[field does not exist]"),
+                }
             }
             PreExprEval::Return { value } => {
                 self.unify(ret_ty, value.ret_ty)?;
