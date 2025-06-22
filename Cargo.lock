@@ -7,14 +7,9 @@ name = "astral_lang"
 version = "0.1.0"
 
 [[package]]
-name = "errorhandling"
-version = "0.1.0"
-
-[[package]]
 name = "front"
 version = "0.1.0"
 dependencies = [
- "errorhandling",
  "nom",
 ]
 

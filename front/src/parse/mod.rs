@@ -15,6 +15,7 @@ use nom::{
 };
 use state::LocatedSpan;
 
+pub mod ast;
 pub mod loc;
 mod state;
 
