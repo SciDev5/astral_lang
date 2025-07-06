@@ -21,8 +21,8 @@ use crate::{
     core::CoreRefs,
     misc::ArbitraryInt,
     post::{
-        AModule, DataId, FunctionId, FunctionIdLocal, LocalId, MetatypeId, ModuleId, WhereId,
-        WhereIdGlobal,
+        AModule, ANamespace, DataId, FunctionId, FunctionIdLocal, LocalId, MetatypeId, ModuleId,
+        WhereId, WhereIdGlobal,
     },
 };
 
@@ -37,6 +37,7 @@ pub struct PreModule {
     pub functions: Vec<PreFunction>,
     pub metatypes: Vec<PreMetatype>,
     pub metatype_impls: Vec<PreMetatypeImpl>,
+    pub namespaces: Vec<ANamespace>,
 }
 
 pub type SymbolId = LocalId;

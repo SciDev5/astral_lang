@@ -32,6 +32,7 @@ pub fn gen_core() -> (CoreRefs, Arc<AModule>) {
         functions: Vec::new(),
         metatypes: Vec::new(),
         metatype_impls: Vec::new(),
+        namespaces: Vec::new(),
     };
     fn gen_insert<T>(l: &mut Vec<T>, v: impl FnOnce(LocalId) -> T) -> LocalId {
         let i = l.len();

@@ -85,7 +85,7 @@ pub struct ASTMetatypeImpl {
     pub name: String,
 }
 pub struct ASTWhere {
-    pub constraints: Vec<(String, ASTType)>,
+    // TODO
 }
 pub struct ASTImportTree {
     // TODO

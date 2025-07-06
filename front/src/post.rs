@@ -14,6 +14,7 @@ pub struct AModule {
     pub functions: Vec<AFunction>,
     pub metatypes: Vec<AMetatype>,
     pub metatype_impls: Vec<AMetatypeImpl>,
+    pub namespaces: Vec<ANamespace>,
 }
 
 pub type LocalId = usize;
@@ -30,6 +31,7 @@ pub type FunctionIdLocal = LocalId;
 pub type MetatypeId = GlobalId;
 pub type WhereId = LocalId;
 pub type WhereIdGlobal = GlobalId;
+pub type NamespaceId = GlobalId;
 
 pub struct AData {
     pub where_id: WhereId,
@@ -177,4 +179,7 @@ pub enum AExprPattern {
     Intersection {
         fields: Vec<AExprPattern>,
     },
+}
+pub struct ANamespace {
+    // TODO
 }

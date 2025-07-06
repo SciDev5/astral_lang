@@ -6,19 +6,19 @@ use std::{
 use crate::{
     core::CoreRefs,
     parse::ast::{
-        ASTData, ASTExpr, ASTFunction, ASTMetatype, ASTMetatypeImpl, ASTStatic, ASTTopLevel,
-        ASTWhere,
+        ASTData, ASTExpr, ASTFunction, ASTImportTree, ASTMetatype, ASTMetatypeImpl, ASTStatic,
+        ASTTopLevel, ASTWhere,
     },
-    post::{AModule, DataId, FunctionId, GlobalId, LocalId, MetatypeId, ModuleId},
+    post::{AModule, DataId, FunctionId, GlobalId, LocalId, MetatypeId, ModuleId, NamespaceId},
 };
 
 #[derive(Debug, Clone, Default)]
 pub struct Scope {
     pub parent: Option<ScopeId>,
-    pub local_vars: Vec<String>,
-    pub functions: Vec<(String, FunctionId)>,
-    pub datas: Vec<(String, DataId)>,
-    pub metatypes: Vec<(String, MetatypeId)>,
+    pub functions: HashMap<String, FunctionId>,
+    pub datas: HashMap<String, DataId>,
+    pub metatypes: HashMap<String, MetatypeId>,
+    pub namespaces: HashMap<String, NamespaceId>,
 }
 type ScopeId = usize;
 pub struct UnresolvedModule {
@@ -27,22 +27,27 @@ pub struct UnresolvedModule {
     pub ref_recursive_deps: HashMap<ModuleId, Arc<AModule>>,
     pub ref_core: CoreRefs,
     pub scopes: Vec<Scope>,
-    pub wheres: Vec<(ASTWhere, ScopeId)>,
     pub datas: Vec<(ASTData, ScopeId)>,
     pub functions: Vec<(ASTFunction, ScopeId)>,
     pub metatypes: Vec<(ASTMetatype, ScopeId)>,
     pub metatype_impls: Vec<(ASTMetatypeImpl, ScopeId)>,
+    pub imports: Vec<(ASTImportTree, ScopeId)>,
+    pub namespaces: Vec<ScopeId>,
 }
 
-pub fn extract_statics(module: &mut UnresolvedModule, mut ast: ASTTopLevel) {
-    ast.scope.get_or_insert_with(|| {
-        module.scopes.push(Scope {
-            parent: None,
-            ..Default::default()
-        });
-        module.scopes.len() - 1
-    });
-    let mut scopes = Vec::from([ast.scope.unwrap()]);
+pub fn resolve_imports(module: &mut UnresolvedModule) {
+    // extracts information from ImportTrees and converts them into references in the parent scope
+    // module.imports
+    // module.scopes
+    if module.imports.len() > 0 {
+        todo!()
+    }
+}
+
+pub fn extract_statics(module: &mut UnresolvedModule, file_id: usize, mut ast: ASTTopLevel) {
+    let top_level_scope = module.namespaces[file_id];
+    ast.scope = Some(top_level_scope);
+    let mut scopes = Vec::from([top_level_scope]);
     for ast_def in ast.defs {
         extract_statics_statics(module, &mut scopes, ast_def);
     }
@@ -134,28 +139,28 @@ fn extract_statics_statics(
 
     match ast {
         ASTStatic::Function(astfunction) => {
-            scope.functions.push((
+            scope.functions.insert(
                 astfunction.name.clone(),
                 local_as_global_id(push_with_id(&mut module.functions, (astfunction, scope_id))),
-            ));
+            );
         }
         ASTStatic::Data(astdata) => {
-            scope.datas.push((
+            scope.datas.insert(
                 astdata.name.clone(),
                 local_as_global_id(push_with_id(&mut module.datas, (astdata, scope_id))),
-            ));
+            );
         }
         ASTStatic::Metatype(astmetatype) => {
-            scope.metatypes.push((
+            scope.metatypes.insert(
                 astmetatype.name.clone(),
                 local_as_global_id(push_with_id(&mut module.metatypes, (astmetatype, scope_id))),
-            ));
+            );
         }
         ASTStatic::MetatypeImpl(astmetatype_impl) => {
             module.metatype_impls.push((astmetatype_impl, scope_id));
         }
         ASTStatic::Import(astimport_tree) => {
-            todo!()
+            module.imports.push((astimport_tree, scope_id));
         }
     }
 }

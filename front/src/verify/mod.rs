@@ -1,4 +1,4 @@
 //! Solves all the types and emits a completed package
 
-mod pre;
+pub mod pre;
 mod solver;
