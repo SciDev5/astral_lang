@@ -41,6 +41,13 @@ impl<'a, T: ?Sized, S> LocatedSpan<&'a T, S> {
     pub const fn loc(&self) -> FileLoc {
         self.loc
     }
+    pub const fn as_start(&self) -> LocatedSpan<&'a T, ()> {
+        LocatedSpan {
+            loc: self.loc.with_len(0),
+            src: self.src,
+            state: (),
+        }
+    }
 }
 impl<'a, S> LocatedSpan<&'a str, S> {
     pub const fn from_inner(src: &'a str, state: S) -> Self {

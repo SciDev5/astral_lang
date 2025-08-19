@@ -108,7 +108,11 @@ fn resolve_function(
             expr: body_expr,
             locals,
         }),
-        return_ty: resolve_type(add_symbol, scopes, function.return_ty, scope),
+        return_ty: if let Some(return_ty) = function.return_ty {
+            resolve_type(add_symbol, scopes, return_ty, scope)
+        } else {
+            add_symbol(None)
+        },
         where_id: add_where({
             dbg!("TODO wheres");
             PreWhere {
@@ -173,7 +177,11 @@ fn resolve_expr(
             ASTExpr::NoOp => return None,
             ASTExpr::LetTEMP { var_name, ty, expr } => {
                 let locals_scope = locals.last_mut().unwrap();
-                let var_id = create_local(resolve_type(add_symbol, scopes, ty, scope));
+                let var_id = create_local(if let Some(ty) = ty {
+                    resolve_type(add_symbol, scopes, ty, scope)
+                } else {
+                    add_symbol(None)
+                });
                 locals_scope.insert(var_name, var_id);
                 PreExprEval::Assign {
                     receiver: PreExprPattern::Var {
