@@ -5,6 +5,10 @@ version = 4
 [[package]]
 name = "astral_lang"
 version = "0.1.0"
+dependencies = [
+ "front",
+ "interpreter",
+]
 
 [[package]]
 name = "front"

@@ -1,11 +1,9 @@
 // Type symbols : global (allows correlation across function borders (lambdas have externally driven types)) (also inference of data entry types with is spicy may or may not use)
 // Reference symbols : represents an instance of data that will be in memory (follows ownership model)
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::collections::HashSet;
 
+#[derive(Debug)]
 pub struct AModule {
     pub global_id: ModuleId,
     pub deps: HashSet<ModuleId>,
@@ -33,16 +31,19 @@ pub type WhereId = LocalId;
 pub type WhereIdGlobal = GlobalId;
 pub type NamespaceId = GlobalId;
 
+#[derive(Debug)]
 pub struct AData {
     pub where_id: WhereId,
     pub fields: ADataFields,
 }
+#[derive(Debug)]
 pub enum ADataFields {
     Elemental,
     Union { variants: Vec<(String, AType)> },
     IntersectionNamed { fields: Vec<(String, AType)> },
     IntersectionOrdered { fields: Vec<AType> },
 }
+#[derive(Debug)]
 pub struct AFunction {
     pub where_id: WhereId,
     pub args_ty: Vec<AType>,
@@ -50,6 +51,7 @@ pub struct AFunction {
     pub body: Option<ABody>,
 }
 
+#[derive(Debug)]
 pub struct AMetatype {
     /// First constraint should be this metatype, and it should bind all
     /// the metavars it creates and in strict ascending order without skips.
@@ -57,17 +59,20 @@ pub struct AMetatype {
     pub where_id: WhereId,
     pub fns: Vec<FunctionIdLocal>,
 }
+#[derive(Debug)]
 pub struct AMetatypeImpl {
     /// First constraint is the metatype to implement.
     pub where_id: WhereId,
     pub fns: Vec<Option<FunctionIdLocal>>,
 }
+#[derive(Debug)]
 pub struct AWhere {
     /// outer scope where clause to concatonate before this
     pub parent_id: Option<WhereId>,
     pub n_vars: usize,
     pub constraints: Vec<(MetatypeId, Vec<AType>)>,
 }
+#[derive(Debug)]
 pub enum AType {
     Data {
         data_id: DataId,
@@ -86,15 +91,18 @@ pub enum AType {
     },
     Error {},
 }
+#[derive(Debug)]
 pub struct ABody {
     /// Note: the first locals are bound to function arguments.
     pub locals: Vec<AType>,
     pub expr: AExpr,
 }
+#[derive(Debug)]
 pub struct AExpr {
     pub ret_ty: AType,
     pub eval: AExprEval,
 }
+#[derive(Debug)]
 pub enum AExprEval {
     Literal {
         value: AExprLiteral,
@@ -134,6 +142,7 @@ pub enum AExprEval {
     },
     // TODO: branch, loop
 }
+#[derive(Debug)]
 pub enum AExprLiteral {
     FunctionRef {
         function_id: FunctionId,
@@ -152,6 +161,7 @@ pub enum AExprLiteral {
     I64(i64),
     Bool(bool),
 }
+#[derive(Debug)]
 pub enum AExprDataInitContent {
     Union {
         variant_id: usize,
@@ -161,6 +171,7 @@ pub enum AExprDataInitContent {
         fields: Vec<AExpr>,
     },
 }
+#[derive(Debug)]
 pub enum AExprPattern {
     Void,
     Literal {
@@ -180,6 +191,7 @@ pub enum AExprPattern {
         fields: Vec<AExprPattern>,
     },
 }
+#[derive(Debug)]
 pub struct ANamespace {
     // TODO
 }

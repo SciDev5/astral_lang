@@ -2,5 +2,5 @@
 //!
 //! Outputs a collection of datas, metatypes, and functions and a list of global symbols with partial types.
 
-mod extract;
-mod resolve;
+pub mod extract;
+pub mod resolve;

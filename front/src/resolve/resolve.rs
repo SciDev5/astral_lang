@@ -1,11 +1,8 @@
 use std::collections::HashMap;
 
 use crate::{
-    parse::{
-        ast::{ASTExpr, ASTFunction, ASTType},
-        loc,
-    },
-    post::{ANamespace, GlobalId, ModuleId, NamespaceId, WhereId},
+    parse::ast::{ASTExpr, ASTFunction, ASTType},
+    post::{ANamespace, GlobalId, NamespaceId, WhereId},
     resolve::extract::{Scope, UnresolvedModule},
     verify::pre::{
         PreBody, PreExpr, PreExprEval, PreExprLiteral, PreExprPattern, PreFunction, PreModule,
@@ -13,7 +10,7 @@ use crate::{
     },
 };
 
-fn resolve(module: UnresolvedModule) -> PreModule {
+pub fn resolve(module: UnresolvedModule) -> PreModule {
     let mut symbols = Vec::new();
     let mut add_symbol = |sym: Option<Symbol>| {
         symbols.push(sym.unwrap_or(Symbol::Subs { to: symbols.len() }));

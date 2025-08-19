@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+front = { path = "./front" }
+interpreter = { path = "./interpreter" }
 
 [workspace]
 members = ["front", "interpreter"]

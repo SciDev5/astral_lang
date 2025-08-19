@@ -177,7 +177,7 @@ impl<'a> GlobalRef<'a, PreWhere, AWhere> {
 /// Requires all static "seed" declarations to be in place
 /// already, such as data field types and metatype function
 /// types, but expressions should not yet be typed.
-fn solve_module(module: PreModule) -> (PreModule, Vec<AVerifyError>) {
+pub fn solve_module(module: PreModule) -> (PreModule, Vec<AVerifyError>) {
     let symbols = module.symbols;
     let mut module = PreModule {
         symbols: Vec::new(),

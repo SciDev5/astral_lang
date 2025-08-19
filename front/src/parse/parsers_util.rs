@@ -210,7 +210,7 @@ pub fn bracket_many_comma_sep<'a, T>(
         }
         if !inner
             .iter()
-            .take(inner.len() - 1)
+            .take(inner.len().saturating_sub(1))
             .all(|(_, _, v)| v.is_some())
         {
             todo!("bracket_many_comma_sep: missing commas")

@@ -7,7 +7,7 @@ use crate::{
     core::CoreRefs,
     parse::ast::{
         ASTData, ASTExpr, ASTFunction, ASTImportTree, ASTMetatype, ASTMetatypeImpl, ASTStatic,
-        ASTTopLevel, ASTWhere,
+        ASTTopLevel,
     },
     post::{AModule, DataId, FunctionId, GlobalId, LocalId, MetatypeId, ModuleId, NamespaceId},
 };
@@ -171,16 +171,17 @@ fn extract_statics_block(
     block_scope: &mut Option<usize>,
     ast: &mut Vec<ASTExpr>,
 ) {
-    block_scope.get_or_insert_with(|| {
+    let block_scope = *block_scope.get_or_insert_with(|| {
         let n = scopes.len();
         module.scopes.push(Scope {
             parent: scopes.last().copied(),
             ..Default::default()
         });
-        scopes.push(n);
         n
     });
+    scopes.push(block_scope);
     for ast_expr in ast {
         extract_statics_expr(module, scopes, ast_expr);
     }
+    scopes.pop();
 }

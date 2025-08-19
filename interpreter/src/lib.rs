@@ -27,6 +27,7 @@ pub fn interpret(
     entry: FunctionId,
 ) -> Value {
     let functions = translate_functions_in_modules(core, &modules);
+    dbg!(&functions);
 
     let Some(IFunction::Instructions {
         n_args: 0,
@@ -48,7 +49,12 @@ pub fn interpret(
 
     loop {
         let current_frame = call_stack.last_mut().unwrap();
-        let instr = &current_frame.instructions[current_frame.next_instr];
+        let instr = if current_frame.next_instr == current_frame.instructions.len() {
+            &IInstruction::Return
+        } else {
+            &current_frame.instructions[current_frame.next_instr]
+        };
+        dbg!(current_frame.next_instr, instr);
         let delta = match instr {
             IInstruction::ReadLocal(var_id) => {
                 current_frame
@@ -124,6 +130,7 @@ fn translate_functions_in_modules(
 ) -> HashMap<FunctionId, IFunction> {
     modules
         .iter()
+        .filter(|(id, _)| **id != 0)
         .flat_map(|(module_id, module)| {
             module.functions.iter().enumerate().map(|(id, func)| {
                 (
@@ -145,6 +152,7 @@ fn translate_functions_in_modules(
         .collect()
 }
 
+#[derive(Debug, Clone)]
 enum IInstruction {
     ReadLocal(usize),
     WriteLocal(usize),
@@ -155,6 +163,7 @@ enum IInstruction {
     DiscardValue,
     PushValue(Box<Value>),
 }
+#[derive(Debug)]
 enum IFunction {
     Builtin(IFunctionBuiltin),
     Instructions {
@@ -165,6 +174,7 @@ enum IFunction {
         instructions: Vec<IInstruction>,
     },
 }
+#[derive(Debug)]
 enum IFunctionBuiltin {
     One,
     Print,
