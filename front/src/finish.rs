@@ -1,9 +1,10 @@
 use crate::{
     verify::pre::{
-        PreData, PreExpr, PreExprEval, PreFunction, PreMetatype, PreMetatypeImpl, PreModule,
-        PreWhere, Symbol,
+        PreData, PreExpr, PreExprEval, PreExprPattern, PreFunction, PreMetatype, PreMetatypeImpl,
+        PreModule, PreWhere, Symbol,
     },
-    ABody, AData, AExpr, AExprEval, AFunction, AMetatype, AMetatypeImpl, AModule, AType, AWhere,
+    ABody, AData, AExpr, AExprEval, AExprPattern, AFunction, AMetatype, AMetatypeImpl, AModule,
+    AType, AWhere,
 };
 
 pub fn finish_module(module: PreModule) -> AModule {
@@ -109,6 +110,13 @@ fn finish_expr(expr: PreExpr, symbols: &Vec<Symbol>) -> AExpr {
         },
         PreExprEval::LocalRef { local_ref_id } => AExprEval::LocalRef { local_ref_id },
         PreExprEval::Deref { reference } => todo!(),
+        PreExprEval::Assign {
+            receiver: PreExprPattern::Var { local_ref_id },
+            value,
+        } => AExprEval::Assign {
+            receiver: AExprPattern::VarBind { local_ref_id },
+            value: Box::new(finish_expr(*value, symbols)),
+        },
         PreExprEval::Assign { receiver, value } => todo!(),
         PreExprEval::DataInit { data_id, value } => todo!(),
         PreExprEval::DataAccess { value, field } => todo!(),

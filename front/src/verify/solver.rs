@@ -206,6 +206,10 @@ pub fn solve_module(module: PreModule) -> (PreModule, Vec<AVerifyError>) {
 
     state.verify_solver_wheres(&module);
 
+    for symbol_id in 0..state.symbols.len() {
+        state.simplify_subs(symbol_id);
+    }
+
     (
         PreModule {
             symbols: state.symbols,
@@ -1082,7 +1086,14 @@ impl Solver {
                 })
             }
             Symbol::Error {} => Some(Symbol::Error {}),
-            Symbol::Subs { to } => self.instantiate_substitute_local(module, *to, map),
+            Symbol::Subs { to } => {
+                if *to == symbol {
+                    dbg!("not sure if this is correct, reevaluate later");
+                    None
+                } else {
+                    self.instantiate_substitute_local(module, *to, map)
+                }
+            }
         }
     }
     /// Helper for [`Self::instantiate_substitute_local`] which runs it on each of the
@@ -1150,12 +1161,12 @@ impl Solver {
             mut sym: SymbolId,
             trace: &mut Vec<SymbolId>,
         ) -> bool {
-            let mut subs_trace = Vec::from([sym]);
+            let mut subs_trace = Vec::new();
             let ok = loop {
                 match &symbols[sym] {
                     Symbol::Subs { to } => {
-                        sym = *to;
                         subs_trace.push(sym);
+                        sym = *to;
                         if subs_trace.contains(&to) {
                             // unresolved type, break to point all above to last (including itself,
                             // to create the trivial loop, representing the unknown)
@@ -1167,8 +1178,8 @@ impl Solver {
                     }
                 }
             };
-            for sym in subs_trace {
-                symbols[sym] = Symbol::Subs { to: sym };
+            for sym_from in subs_trace {
+                symbols[sym_from] = Symbol::Subs { to: sym };
             }
             ok
         }
@@ -1182,7 +1193,13 @@ impl Solver {
         }
         Some(loop {
             match &self.symbols[sym] {
-                Symbol::Subs { to } => sym = *to,
+                Symbol::Subs { to } => {
+                    if sym == *to {
+                        return None;
+                    } else {
+                        sym = *to
+                    }
+                }
                 sym => break sym,
             }
         })
@@ -1396,4 +1413,35 @@ impl Solver {
 
 
     */
+}
+
+#[test]
+fn test_simplify_subs() {
+    let data_symbol = Symbol::Data {
+        data_id: GlobalId {
+            module_id: 0,
+            id: 0,
+        },
+        bindings: Vec::new(),
+    };
+    for i in 0..3 {
+        let mut solver = Solver {
+            errors: Vec::new(),
+            solved_functions: Vec::new(),
+            solver_requested_constraints: Vec::new(),
+            symbols: Vec::from([
+                Symbol::Subs { to: 1 },
+                Symbol::Subs { to: 2 },
+                data_symbol.clone(),
+            ]),
+        };
+        solver.simplify_subs(i);
+        if i == 0 {
+            assert_eq!(solver.symbols[0], Symbol::Subs { to: 2 });
+        } else {
+            assert_eq!(solver.symbols[0], Symbol::Subs { to: 1 });
+        }
+        assert_eq!(solver.symbols[1], Symbol::Subs { to: 2 });
+        assert_eq!(solver.symbols[2], data_symbol);
+    }
 }

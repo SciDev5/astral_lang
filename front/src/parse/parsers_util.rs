@@ -218,3 +218,14 @@ pub fn bracket_many_comma_sep<'a, T>(
         inner.into_iter().map(|(v, _, _)| v).collect()
     })
 }
+
+pub fn many_flexible<'a, T>(
+    inner: impl Parser<
+        State<'a>,
+        Output = T,
+        Error = nom::error::Error<LocatedSpan<&'a str, StateData>>,
+    >,
+) -> impl Parser<State<'a>, Output = Vec<T>, Error = nom::error::Error<LocatedSpan<&'a str, StateData>>>
+{
+    many0(inner) // todo add the flexibility (ie error recovery)
+}

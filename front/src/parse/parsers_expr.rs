@@ -4,7 +4,7 @@ use crate::parse::{
     ast::{ASTExpr, ASTSep},
     parsers_static::def_static,
     parsers_type::type_annotation,
-    parsers_util::{bracket_many_comma_sep, ident, sep, BracketType},
+    parsers_util::{bracket, bracket_many_comma_sep, ident, many_flexible, sep, BracketType},
     Span, State,
 };
 
@@ -85,9 +85,9 @@ fn expr_name(state: State) -> IResult<State, ASTExpr> {
 fn expr_block(state: State) -> IResult<State, ASTExpr> {
     (
         sep,
-        bracket_many_comma_sep(BracketType::Curly, expr_thrifty),
+        bracket(BracketType::Curly, many_flexible(expr_thrifty)),
     )
-        .map(|(_, exprs)| ASTExpr::Block { scope: None, exprs })
+        .map(|(_, (_, exprs, _, _))| ASTExpr::Block { scope: None, exprs })
         .parse(state)
 }
 fn expr_static(state: State) -> IResult<State, ASTExpr> {

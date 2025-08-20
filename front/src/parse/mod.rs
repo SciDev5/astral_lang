@@ -5,10 +5,14 @@
 //! PARSER CONVENTIONS:
 //!  - parsers may not parse trailing whitespace, only leading
 
-use nom::{multi::many0, IResult, Parser};
+use nom::{IResult, Parser};
 use state::LocatedSpan;
 
-use crate::parse::{ast::ASTTopLevel, parsers_static::def_static, parsers_util::BracketState};
+use crate::parse::{
+    ast::ASTTopLevel,
+    parsers_static::def_static,
+    parsers_util::{many_flexible, BracketState},
+};
 
 pub mod ast;
 pub mod loc;
@@ -27,7 +31,7 @@ struct StateData {
 }
 
 fn top_level(state: State) -> IResult<State, ASTTopLevel> {
-    many0(def_static)
+    many_flexible(def_static)
         .map(|defs| ASTTopLevel { scope: None, defs })
         .parse(state)
 }

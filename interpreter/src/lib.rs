@@ -64,6 +64,7 @@ pub fn interpret(
             }
             IInstruction::WriteLocal(var_id) => {
                 current_frame.vars[*var_id] = current_frame.intermediates.pop().unwrap();
+                current_frame.intermediates.push(Value::CoreVoid);
                 1
             }
             IInstruction::Call(global_id) => {
@@ -298,8 +299,8 @@ fn translate_expr(expr: &AExpr) -> Vec<IInstruction> {
     }
 }
 
-pub fn interpreter_builtins(core: CoreRefs) -> AModule {
-    AModule {
+pub fn interpreter_builtins(core: CoreRefs) -> Arc<AModule> {
+    Arc::new(AModule {
         global_id: 1,
         deps: HashSet::new(),
         wheres: Vec::from([AWhere {
@@ -338,5 +339,5 @@ pub fn interpreter_builtins(core: CoreRefs) -> AModule {
         namespaces: Vec::from([ANamespace {
             // todo: export
         }]),
-    }
+    })
 }

@@ -77,6 +77,7 @@ pub struct PreWhere {
     pub n_vars: usize,
     pub constraints: Vec<(MetatypeId, Vec<SymbolId>)>,
 }
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Symbol {
     Data {
         data_id: DataId,
@@ -113,10 +114,12 @@ pub struct PreBody {
     pub locals: Vec<SymbolId>,
     pub expr: PreExpr,
 }
+#[derive(Debug)]
 pub struct PreExpr {
     pub ret_ty: SymbolId,
     pub eval: PreExprEval,
 }
+#[derive(Debug)]
 pub enum PreExprEval {
     Literal {
         value: PreExprLiteral,
@@ -161,6 +164,7 @@ pub enum PreExprEval {
     // TODO: branch, loop
     Error {},
 }
+#[derive(Debug)]
 pub enum PreExprLiteral {
     FunctionRef {
         function_id: FunctionId,
@@ -172,6 +176,7 @@ pub enum PreExprLiteral {
     Integer(ArbitraryInt),
     Bool(bool),
 }
+#[derive(Debug)]
 pub enum PreExprDataInitContent {
     Union {
         variant_name: String,
@@ -184,6 +189,7 @@ pub enum PreExprDataInitContent {
         map: Vec<PreExpr>,
     },
 }
+#[derive(Debug)]
 pub enum PreExprPattern {
     Literal {
         literal: PreExprLiteral,
@@ -202,6 +208,7 @@ pub enum PreExprPattern {
         fields: Vec<PreExprPattern>,
     },
 }
+#[derive(Debug)]
 pub enum PreExprField {
     StructIsh(String),
     TupleIsh(usize),

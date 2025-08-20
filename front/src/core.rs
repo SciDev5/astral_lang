@@ -23,7 +23,7 @@ pub struct CoreRefs {
     pub d_u64: GlobalId,
 }
 
-pub fn gen_core() -> (CoreRefs, AModule) {
+pub fn gen_core() -> (CoreRefs, Arc<AModule>) {
     let mut core = AModule {
         global_id: 0,
         deps: HashSet::new(),
@@ -109,6 +109,6 @@ pub fn gen_core() -> (CoreRefs, AModule) {
             d_u32: gen_data_elemental(&mut core.datas, &mut core.wheres),
             d_u64: gen_data_elemental(&mut core.datas, &mut core.wheres),
         },
-        core,
+        Arc::new(core),
     )
 }
